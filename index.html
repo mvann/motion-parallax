@@ -156,9 +156,9 @@
     <div class="ctrl-row">
       <div class="ctrl-head">
         <label for="zoomSlider"><span class="dot" style="background:var(--cam)"></span>Zoom</label>
-        <span class="val" id="zoomVal">15×</span>
+        <span class="val" id="zoomVal">500×</span>
       </div>
-      <input id="zoomSlider" type="range" min="1" max="30" step="1" value="15">
+      <input id="zoomSlider" type="range" min="1" max="1000" step="1" value="500">
     </div>
   </div>
 
@@ -196,12 +196,11 @@
     const BALLOON_Z_MAX = 25000;
     const BALLOON_Z_DEFAULT = 10000;
     const ZOOM_MIN = 1;
-    const ZOOM_MAX = 30;
-    const ZOOM_DEFAULT = 15;
+    const ZOOM_MAX = 1000;
+    const ZOOM_DEFAULT = 500;
     const WIDE_FOV = 55;
 
     // ---- POV (Three.js) ----
-    const BALLOON_R = 220;
     const povEl = document.getElementById('pov');
     const zoomEl = document.getElementById('zoom');
     let renderer = null, zoomRenderer = null;
@@ -286,35 +285,35 @@
       scene.add(new THREE.Mesh(g, m));
     }
 
-    // Balloon
+    // Balloon — a ~3 ft latex party balloon (ellipsoidal with a small knot)
     const balloonGroup = new THREE.Group();
     {
-      const b = new THREE.Mesh(
-        new THREE.SphereGeometry(BALLOON_R, 28, 20),
-        new THREE.MeshLambertMaterial({ color: 0xd0342c })
-      );
-      balloonGroup.add(b);
-      const basket = new THREE.Mesh(
-        new THREE.BoxGeometry(140, 110, 140),
-        new THREE.MeshLambertMaterial({ color: 0x7a4a26 })
-      );
-      basket.position.y = -340;
-      balloonGroup.add(basket);
-      // ropes (thin lines)
-      const ropeMat = new THREE.LineBasicMaterial({ color: 0x2a1a10 });
-      const ropePts = [
-        [ 70, -220,  70], [ 70, -285,  70],
-        [-70, -220,  70], [-70, -285,  70],
-        [ 70, -220, -70], [ 70, -285, -70],
-        [-70, -220, -70], [-70, -285, -70],
+      // Profile in feet, right half (revolved around Y). Max diameter ~3 ft.
+      const profile = [
+        new THREE.Vector2(0.00, 0.00), // knot bottom tip
+        new THREE.Vector2(0.08, 0.05),
+        new THREE.Vector2(0.10, 0.14), // small knot bulge
+        new THREE.Vector2(0.06, 0.18), // pinch above knot
+        new THREE.Vector2(0.18, 0.28),
+        new THREE.Vector2(0.45, 0.55),
+        new THREE.Vector2(0.85, 0.95),
+        new THREE.Vector2(1.20, 1.40),
+        new THREE.Vector2(1.42, 1.90),
+        new THREE.Vector2(1.50, 2.20), // widest, ~2/3 of total height
+        new THREE.Vector2(1.45, 2.55),
+        new THREE.Vector2(1.28, 2.90),
+        new THREE.Vector2(0.95, 3.20),
+        new THREE.Vector2(0.45, 3.45),
+        new THREE.Vector2(0.00, 3.55), // top
       ];
-      for (let i = 0; i < ropePts.length; i += 2) {
-        const geo = new THREE.BufferGeometry().setFromPoints([
-          new THREE.Vector3(...ropePts[i]),
-          new THREE.Vector3(...ropePts[i + 1]),
-        ]);
-        balloonGroup.add(new THREE.Line(geo, ropeMat));
-      }
+      // Center vertically so group origin sits at the balloon's middle
+      const yCenter = 3.55 / 2;
+      const pts = profile.map(p => new THREE.Vector2(p.x, p.y - yCenter));
+      const geom = new THREE.LatheGeometry(pts, 36);
+      const mat = new THREE.MeshPhongMaterial({
+        color: 0xe23a2c, shininess: 90, specular: 0x999999,
+      });
+      balloonGroup.add(new THREE.Mesh(geom, mat));
     }
     scene.add(balloonGroup);
 
