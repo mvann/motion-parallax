@@ -33,6 +33,16 @@ python3 -m http.server 8000
 
 Or `npm run serve`.
 
+## GitHub Pages
+
+A workflow in `.github/workflows/pages.yml` deploys this site to GitHub Pages
+on every push to `main` (or the active dev branch). First-time setup:
+
+1. Go to **Settings → Pages**
+2. Under **Build and deployment → Source**, choose **GitHub Actions**
+3. Push (or re-run the workflow from the Actions tab). The deployed URL will
+   be `https://<user>.github.io/motion-parallax/`.
+
 ## URL parameters
 
 You can deep-link a configuration:
