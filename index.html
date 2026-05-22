@@ -115,7 +115,7 @@
     <div class="label">Camera POV</div>
   </div>
   <div id="zoom" class="view">
-    <div class="label">Zoomed (balloon-locked)</div>
+    <div class="label">Zoomed</div>
   </div>
   <div id="map-wrap" class="view">
     <div class="label">Top-down</div>
@@ -126,6 +126,7 @@
       <div class="ctrl-head">
         <label for="camSlider"><span class="dot" style="background:var(--cam)"></span>Observer Position</label>
         <select id="vehicle" aria-label="Aircraft">
+          <option value="f18">F-18 Super Hornet</option>
           <option value="fighter">Fighter jet</option>
           <option value="commercial">Commercial jet</option>
           <option value="helicopter">Helicopter</option>
@@ -133,7 +134,7 @@
           <option value="biplane">Biplane</option>
           <option value="manual">Manual</option>
         </select>
-        <span class="vspeed" id="vehicleSpeed">800 mph</span>
+        <span class="vspeed" id="vehicleSpeed">1,200 mph</span>
         <span class="val" id="camVal">−10,000 ft</span>
       </div>
       <input id="camSlider" type="range" min="-10000" max="10000" step="1" value="-10000">
@@ -141,9 +142,23 @@
     <div class="ctrl-row">
       <div class="ctrl-head">
         <label for="balSlider"><span class="dot" style="background:var(--bal)"></span>Balloon height</label>
-        <span class="val" id="balVal">7,500 ft</span>
+        <span class="val" id="balVal">13,000 ft</span>
       </div>
-      <input id="balSlider" type="range" min="500" max="15000" step="50" value="7500">
+      <input id="balSlider" type="range" min="500" max="13000" step="50" value="13000">
+    </div>
+    <div class="ctrl-row">
+      <div class="ctrl-head">
+        <label for="distSlider"><span class="dot" style="background:var(--bal)"></span>Balloon distance</label>
+        <span class="val" id="distVal">10,000 ft</span>
+      </div>
+      <input id="distSlider" type="range" min="500" max="25000" step="50" value="10000">
+    </div>
+    <div class="ctrl-row">
+      <div class="ctrl-head">
+        <label for="zoomSlider"><span class="dot" style="background:var(--cam)"></span>Zoom</label>
+        <span class="val" id="zoomVal">15×</span>
+      </div>
+      <input id="zoomSlider" type="range" min="1" max="30" step="1" value="15">
     </div>
   </div>
 
@@ -159,24 +174,31 @@
 
     // ---- Vehicles (cruise speeds in mph) ----
     const VEHICLES = {
-      fighter:    { name: 'Fighter jet',    mph: 800 },
-      commercial: { name: 'Commercial jet', mph: 575 },
-      helicopter: { name: 'Helicopter',     mph: 175 },
-      uav:        { name: 'UAV',            mph: 135 },
-      biplane:    { name: 'Biplane',        mph: 100 },
-      manual:     { name: 'Manual',         mph: 0   },
+      f18:        { name: 'F-18 Super Hornet', mph: 1200 },
+      fighter:    { name: 'Fighter jet',       mph: 800  },
+      commercial: { name: 'Commercial jet',    mph: 575  },
+      helicopter: { name: 'Helicopter',        mph: 175  },
+      uav:        { name: 'UAV',               mph: 135  },
+      biplane:    { name: 'Biplane',           mph: 100  },
+      manual:     { name: 'Manual',            mph: 0    },
     };
-    let currentVehicle = 'fighter';
+    let currentVehicle = 'f18';
     let flightDir = 1;          // +1 right, -1 left
     let lastFrameT = 0;
 
     // ---- World constants (feet) ----
-    const CAMERA_Y = 10000;
+    const CAMERA_Y = 25000;
     const CAMERA_PATH_HALF = 10000;
-    const BALLOON_Z = 10000;             // fixed distance out from the observer's path
     const BALLOON_HEIGHT_MIN = 500;
-    const BALLOON_HEIGHT_MAX = 15000;
-    const BALLOON_HEIGHT_DEFAULT = 7500;
+    const BALLOON_HEIGHT_MAX = 13000;
+    const BALLOON_HEIGHT_DEFAULT = 13000;
+    const BALLOON_Z_MIN = 500;
+    const BALLOON_Z_MAX = 25000;
+    const BALLOON_Z_DEFAULT = 10000;
+    const ZOOM_MIN = 1;
+    const ZOOM_MAX = 30;
+    const ZOOM_DEFAULT = 15;
+    const WIDE_FOV = 55;
 
     // ---- POV (Three.js) ----
     const BALLOON_R = 220;
@@ -327,8 +349,12 @@
     // ---- Controls ----
     const camSlider = document.getElementById('camSlider');
     const balSlider = document.getElementById('balSlider');
+    const distSlider = document.getElementById('distSlider');
+    const zoomSlider = document.getElementById('zoomSlider');
     const camVal = document.getElementById('camVal');
     const balVal = document.getElementById('balVal');
+    const distVal = document.getElementById('distVal');
+    const zoomVal = document.getElementById('zoomVal');
 
     function fmt(n) {
       const r = Math.round(n);
@@ -336,14 +362,14 @@
       return sign + Math.abs(r).toLocaleString() + ' ft';
     }
 
-    function drawMap(cx) {
+    function drawMap(cx, bz) {
       const { W, H } = mapDims;
       if (W === 0 || H === 0) return;
       mctx.clearRect(0, 0, W, H);
 
-      // World view extents
+      // World view extents — adapt z to current balloon distance
       const xMin = -16000, xMax = 16000;
-      const zMin = -2500, zMax = BALLOON_Z + 4000;
+      const zMin = -2500, zMax = Math.max(bz + 3000, 14000);
       const sx = W / (xMax - xMin);
       const sz = H / (zMax - zMin);
       const s = Math.min(sx, sz);
@@ -379,7 +405,7 @@
       mctx.lineWidth = 1;
       mctx.beginPath();
       mctx.moveTo(X(cx), Z(0));
-      mctx.lineTo(X(0), Z(BALLOON_Z));
+      mctx.lineTo(X(0), Z(bz));
       mctx.stroke();
 
       // Aircraft marker — drawn aligned with the path (facing flight direction)
@@ -390,12 +416,12 @@
       drawAircraft(mctx, currentVehicle);
       mctx.restore();
 
-      // Balloon marker (fixed position; height varies but not visible from above)
+      // Balloon marker (height varies but not visible from above; distance does show)
       mctx.fillStyle = '#ff5a4a';
       mctx.strokeStyle = 'white';
       mctx.lineWidth = 1;
       mctx.beginPath();
-      mctx.arc(X(0), Z(BALLOON_Z), 7, 0, Math.PI * 2);
+      mctx.arc(X(0), Z(bz), 7, 0, Math.PI * 2);
       mctx.fill();
       mctx.stroke();
     }
@@ -561,23 +587,24 @@
 
     function update() {
       const cx = parseFloat(camSlider.value);
-      const bh = parseFloat(balSlider.value); // balloon height (Y)
+      const bh = parseFloat(balSlider.value);    // balloon height (Y)
+      const bz = parseFloat(distSlider.value);   // balloon distance from path (Z)
+      const zoom = parseFloat(zoomSlider.value); // telephoto multiplier
       camera.position.set(cx, CAMERA_Y, 0);
-      balloonGroup.position.set(0, bh, BALLOON_Z);
-      camera.lookAt(0, bh, BALLOON_Z);
+      balloonGroup.position.set(0, bh, bz);
+      camera.lookAt(0, bh, bz);
 
-      // Zoomed camera: same pose as main camera, FOV picked so balloon
-      // diameter == half the view height.
+      // Zoomed camera: same pose, FOV = wide FOV / zoom
       zoomCamera.position.copy(camera.position);
       zoomCamera.quaternion.copy(camera.quaternion);
-      const dx = cx, dy = CAMERA_Y - bh, dz = -BALLOON_Z;
-      const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
-      zoomCamera.fov = THREE.MathUtils.radToDeg(2 * Math.atan(2 * BALLOON_R / dist));
+      zoomCamera.fov = WIDE_FOV / zoom;
       zoomCamera.updateProjectionMatrix();
 
       camVal.textContent = fmt(cx);
       balVal.textContent = fmt(bh);
-      drawMap(cx);
+      distVal.textContent = fmt(bz);
+      zoomVal.textContent = zoom.toFixed(0) + '×';
+      drawMap(cx, bz);
     }
 
     const vehicleSelect = document.getElementById('vehicle');
@@ -595,15 +622,20 @@
       lastFrameT = 0; // restart dt accumulation
     }
 
-    // Optional query-string initial values: ?cam=10000&bal=12000&vehicle=helicopter
+    // Optional query-string initial values: ?cam=10000&bal=12000&dist=8000&zoom=20&vehicle=helicopter
     {
       const q = new URLSearchParams(location.search);
-      const c = parseFloat(q.get('cam')), b = parseFloat(q.get('bal'));
+      const c = parseFloat(q.get('cam'));
+      const b = parseFloat(q.get('bal'));
+      const d = parseFloat(q.get('dist'));
+      const z = parseFloat(q.get('zoom'));
       if (Number.isFinite(c)) {
         camSlider.value = Math.max(-CAMERA_PATH_HALF, Math.min(CAMERA_PATH_HALF, c));
         currentVehicle = 'manual';
       }
-      if (Number.isFinite(b)) balSlider.value = Math.max(BALLOON_HEIGHT_MIN, Math.min(BALLOON_HEIGHT_MAX, b));
+      if (Number.isFinite(b)) balSlider.value  = Math.max(BALLOON_HEIGHT_MIN, Math.min(BALLOON_HEIGHT_MAX, b));
+      if (Number.isFinite(d)) distSlider.value = Math.max(BALLOON_Z_MIN,      Math.min(BALLOON_Z_MAX,      d));
+      if (Number.isFinite(z)) zoomSlider.value = Math.max(ZOOM_MIN,           Math.min(ZOOM_MAX,           z));
       const qv = q.get('vehicle');
       if (qv && VEHICLES[qv]) currentVehicle = qv;
     }
@@ -615,6 +647,8 @@
       update();
     });
     balSlider.addEventListener('input', update);
+    distSlider.addEventListener('input', update);
+    zoomSlider.addEventListener('input', update);
     vehicleSelect.addEventListener('change', () => setVehicle(vehicleSelect.value));
 
     function tick(t) {
