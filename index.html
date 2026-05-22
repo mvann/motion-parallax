@@ -753,6 +753,17 @@
       mctx.fill();
       mctx.stroke();
 
+      // Annotation pointing at the (stationary) object
+      mctx.font = '600 11px -apple-system, sans-serif';
+      mctx.textAlign = 'left';
+      mctx.textBaseline = 'middle';
+      const annotation = "<---- Object isn't moving";
+      mctx.lineWidth = 3;
+      mctx.strokeStyle = 'rgba(0,0,0,0.7)';
+      mctx.strokeText(annotation, X(0) + 12, Z(BALLOON_Z));
+      mctx.fillStyle = 'rgba(255,255,255,0.98)';
+      mctx.fillText(annotation, X(0) + 12, Z(BALLOON_Z));
+
       // Distance scale (Google-Maps style)
       const scaleFt = pickScaleFt(W * 0.28, s);
       const scalePx = scaleFt * s;
