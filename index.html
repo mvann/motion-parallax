@@ -279,16 +279,6 @@
       return tex;
     }
 
-    // Ocean
-    {
-      const g = new THREE.PlaneGeometry(400000, 400000, 1, 1);
-      g.rotateX(-Math.PI / 2);
-      const tex = makeOceanTexture();
-      tex.repeat.set(70, 70);  // tile ~5,700 ft per repeat
-      const m = new THREE.MeshLambertMaterial({ map: tex, color: 0x9cb8d8 });
-      scene.add(new THREE.Mesh(g, m));
-    }
-
     // ---- Perlin noise (gradient noise) for island heightfield ----
     const PERM = new Uint8Array(512);
     (() => {
@@ -327,10 +317,10 @@
         total += amp;
         amp *= 0.5; freq *= 2;
       }
-      return n / total; // ~-0.7..0.7
+      return n / total;
     }
     // Sparse islands: low-frequency placement * high-frequency shape detail.
-    // Total height capped around 25 ft so all three color bands are visible.
+    // Height capped around 25 ft so all three color bands are visible.
     const PLACEMENT_SCALE = 1 / 8000;
     const DETAIL_SCALE    = 1 / 1500;
     const PLACEMENT_CUTOFF = 0.20;
@@ -342,13 +332,9 @@
       const wobble = (shape + 0.4) * 8;
       return Math.max(0, peak + wobble - 4);
     }
-    // Islands — painted flat onto a textured plane just above the ocean.
-    // A 3D heightmap mesh z-fights with the ocean at coastlines (vertices at h=0
-    // are coplanar with the ocean), and tiny triangles alias hard at distance.
-    // The flat approach is also visually faithful: from 25,000 ft up, real
-    // islands appear essentially 2D anyway.
-    const ISLE_XMIN = -80000, ISLE_XMAX = 80000;
-    const ISLE_ZMIN = -10000, ISLE_ZMAX = 80000;
+
+    // Ocean — single plane that ALSO paints the islands via a shader hook.
+    // Two stacked planes z-fight at long range; one mesh fixes it for good.
     function buildIslandsTexture() {
       const TEX_W = 2048, TEX_H = 1152; // ~78 ft/pixel
       const c = document.createElement('canvas');
@@ -380,21 +366,51 @@
       tex.minFilter = THREE.LinearMipmapLinearFilter;
       return tex;
     }
+    const ISLE_XMIN = -80000, ISLE_XMAX = 80000;
+    const ISLE_ZMIN = -10000, ISLE_ZMAX = 80000;
     {
-      const w = ISLE_XMAX - ISLE_XMIN;
-      const d = ISLE_ZMAX - ISLE_ZMIN;
-      const g = new THREE.PlaneGeometry(w, d);
+      const g = new THREE.PlaneGeometry(400000, 400000, 1, 1);
       g.rotateX(-Math.PI / 2);
-      const mat = new THREE.MeshLambertMaterial({
-        map: buildIslandsTexture(),
-        transparent: true,
-        alphaTest: 0.5,
-        side: THREE.DoubleSide,
-      });
-      const mesh = new THREE.Mesh(g, mat);
-      // Sit a hair above the ocean to avoid coplanar z-fighting.
-      mesh.position.set((ISLE_XMIN + ISLE_XMAX) / 2, 0.6, (ISLE_ZMIN + ISLE_ZMAX) / 2);
-      scene.add(mesh);
+      const oceanTex = makeOceanTexture();
+      oceanTex.repeat.set(70, 70);
+      const islandsTex = buildIslandsTexture();
+      const m = new THREE.MeshLambertMaterial({ map: oceanTex, color: 0x9cb8d8 });
+      m.onBeforeCompile = (shader) => {
+        shader.uniforms.islandsMap   = { value: islandsTex };
+        shader.uniforms.islandsMin   = { value: new THREE.Vector2(ISLE_XMIN, ISLE_ZMIN) };
+        shader.uniforms.islandsSize  = { value: new THREE.Vector2(ISLE_XMAX - ISLE_XMIN, ISLE_ZMAX - ISLE_ZMIN) };
+        // Vertex: forward world-space XZ position
+        shader.vertexShader = 'varying vec3 vWorldPos;\n' + shader.vertexShader;
+        shader.vertexShader = shader.vertexShader.replace(
+          '#include <project_vertex>',
+          '#include <project_vertex>\n  vWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;'
+        );
+        // Fragment: composite islands over ocean inside <map_fragment>
+        shader.fragmentShader = (
+          'uniform sampler2D islandsMap;\n' +
+          'uniform vec2 islandsMin;\n' +
+          'uniform vec2 islandsSize;\n' +
+          'varying vec3 vWorldPos;\n'
+        ) + shader.fragmentShader;
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <map_fragment>',
+          [
+            '#ifdef USE_MAP',
+            '  vec4 sampledDiffuseColor = texture2D( map, vMapUv );',
+            '  vec2 isleUV = vec2(',
+            '    (vWorldPos.x - islandsMin.x) / islandsSize.x,',
+            '    1.0 - (vWorldPos.z - islandsMin.y) / islandsSize.y',
+            '  );',
+            '  if (isleUV.x >= 0.0 && isleUV.x <= 1.0 && isleUV.y >= 0.0 && isleUV.y <= 1.0) {',
+            '    vec4 islandSample = texture2D(islandsMap, isleUV);',
+            '    sampledDiffuseColor.rgb = mix(sampledDiffuseColor.rgb, islandSample.rgb, islandSample.a);',
+            '  }',
+            '  diffuseColor *= sampledDiffuseColor;',
+            '#endif',
+          ].join('\n')
+        );
+      };
+      scene.add(new THREE.Mesh(g, m));
     }
 
     // ---- Object builders (real-world dimensions in feet) ----
