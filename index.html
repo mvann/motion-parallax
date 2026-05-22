@@ -141,14 +141,27 @@
     </div>
     <div class="ctrl-row">
       <div class="ctrl-head">
-        <label for="balSlider"><span class="dot" style="background:var(--bal)"></span>Balloon height</label>
+        <label for="object"><span class="dot" style="background:var(--bal)"></span>Object</label>
+        <select id="object" aria-label="Object">
+          <option value="weather">Weather balloon (5 ft)</option>
+          <option value="latex">Latex balloon (1 ft)</option>
+          <option value="hotair">Hot air balloon (60 ft)</option>
+          <option value="human">Human / skydiver (6 ft)</option>
+          <option value="bird">Bird (6 ft wingspan)</option>
+          <option value="blimp">Blimp (200 ft)</option>
+        </select>
+      </div>
+    </div>
+    <div class="ctrl-row">
+      <div class="ctrl-head">
+        <label for="balSlider"><span class="dot" style="background:var(--bal)"></span>Height</label>
         <span class="val" id="balVal">13,000 ft</span>
       </div>
       <input id="balSlider" type="range" min="500" max="13000" step="50" value="13000">
     </div>
     <div class="ctrl-row">
       <div class="ctrl-head">
-        <label for="distSlider"><span class="dot" style="background:var(--bal)"></span>Balloon distance</label>
+        <label for="distSlider"><span class="dot" style="background:var(--bal)"></span>Distance</label>
         <span class="val" id="distVal">10,000 ft</span>
       </div>
       <input id="distSlider" type="range" min="500" max="25000" step="50" value="10000">
@@ -285,37 +298,211 @@
       scene.add(new THREE.Mesh(g, m));
     }
 
-    // Balloon — a ~3 ft latex party balloon (ellipsoidal with a small knot)
-    const balloonGroup = new THREE.Group();
-    {
-      // Profile in feet, right half (revolved around Y). Max diameter ~3 ft.
-      const profile = [
-        new THREE.Vector2(0.00, 0.00), // knot bottom tip
-        new THREE.Vector2(0.08, 0.05),
-        new THREE.Vector2(0.10, 0.14), // small knot bulge
-        new THREE.Vector2(0.06, 0.18), // pinch above knot
-        new THREE.Vector2(0.18, 0.28),
-        new THREE.Vector2(0.45, 0.55),
-        new THREE.Vector2(0.85, 0.95),
-        new THREE.Vector2(1.20, 1.40),
-        new THREE.Vector2(1.42, 1.90),
-        new THREE.Vector2(1.50, 2.20), // widest, ~2/3 of total height
-        new THREE.Vector2(1.45, 2.55),
-        new THREE.Vector2(1.28, 2.90),
-        new THREE.Vector2(0.95, 3.20),
-        new THREE.Vector2(0.45, 3.45),
-        new THREE.Vector2(0.00, 3.55), // top
-      ];
-      // Center vertically so group origin sits at the balloon's middle
-      const yCenter = 3.55 / 2;
-      const pts = profile.map(p => new THREE.Vector2(p.x, p.y - yCenter));
-      const geom = new THREE.LatheGeometry(pts, 36);
-      const mat = new THREE.MeshPhongMaterial({
-        color: 0xe23a2c, shininess: 90, specular: 0x999999,
-      });
-      balloonGroup.add(new THREE.Mesh(geom, mat));
+    // ---- Object builders (real-world dimensions in feet) ----
+    function latheCentered(profile, segments = 24) {
+      const minY = Math.min(...profile.map(p => p.y));
+      const maxY = Math.max(...profile.map(p => p.y));
+      const yMid = (minY + maxY) / 2;
+      const pts = profile.map(p => new THREE.Vector2(p.x, p.y - yMid));
+      return new THREE.LatheGeometry(pts, segments);
     }
+
+    function buildWeatherBalloon() {
+      // Standard launch size ~5 ft diameter, white latex, payload below
+      const g = new THREE.Group();
+      const sphere = new THREE.Mesh(
+        new THREE.SphereGeometry(2.5, 28, 18),
+        new THREE.MeshPhongMaterial({
+          color: 0xeeeef0, shininess: 80, specular: 0xaaaaaa,
+          transparent: true, opacity: 0.9,
+        })
+      );
+      sphere.scale.y = 1.1;
+      g.add(sphere);
+      const lineGeom = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, -2.5, 0), new THREE.Vector3(0, -4.4, 0),
+      ]);
+      g.add(new THREE.Line(lineGeom, new THREE.LineBasicMaterial({ color: 0x444444 })));
+      const sonde = new THREE.Mesh(
+        new THREE.BoxGeometry(0.55, 0.5, 0.55),
+        new THREE.MeshPhongMaterial({ color: 0xff7e1a })
+      );
+      sonde.position.y = -4.7;
+      g.add(sonde);
+      return g;
+    }
+
+    function buildLatexBalloon() {
+      // ~1 ft (11" standard party balloon)
+      const profile = [
+        new THREE.Vector2(0.00, 0.00),
+        new THREE.Vector2(0.03, 0.02),
+        new THREE.Vector2(0.04, 0.05),
+        new THREE.Vector2(0.02, 0.07),
+        new THREE.Vector2(0.07, 0.11),
+        new THREE.Vector2(0.18, 0.22),
+        new THREE.Vector2(0.32, 0.38),
+        new THREE.Vector2(0.43, 0.57),
+        new THREE.Vector2(0.49, 0.78),
+        new THREE.Vector2(0.50, 0.95),
+        new THREE.Vector2(0.46, 1.10),
+        new THREE.Vector2(0.36, 1.22),
+        new THREE.Vector2(0.18, 1.30),
+        new THREE.Vector2(0.00, 1.33),
+      ];
+      return new THREE.Mesh(
+        latheCentered(profile, 28),
+        new THREE.MeshPhongMaterial({ color: 0xe23a2c, shininess: 90, specular: 0x999999 })
+      );
+    }
+
+    function buildHotAirBalloon() {
+      // ~50 ft envelope, ~10 ft basket below
+      const g = new THREE.Group();
+      const profile = [
+        new THREE.Vector2(0,  -28),
+        new THREE.Vector2(3,  -27),
+        new THREE.Vector2(8,  -22),
+        new THREE.Vector2(14, -13),
+        new THREE.Vector2(20, -3),
+        new THREE.Vector2(24,  8),
+        new THREE.Vector2(25, 18),
+        new THREE.Vector2(23, 27),
+        new THREE.Vector2(17, 33),
+        new THREE.Vector2(7,  35),
+        new THREE.Vector2(0,  35.5),
+      ];
+      g.add(new THREE.Mesh(
+        latheCentered(profile, 36),
+        new THREE.MeshPhongMaterial({ color: 0xd13838, shininess: 30 })
+      ));
+      const basket = new THREE.Mesh(
+        new THREE.BoxGeometry(8, 5, 8),
+        new THREE.MeshLambertMaterial({ color: 0x6a4318 })
+      );
+      basket.position.y = -34;
+      g.add(basket);
+      const ropeMat = new THREE.LineBasicMaterial({ color: 0x2a1a10 });
+      for (const [x, z] of [[4,4],[4,-4],[-4,4],[-4,-4]]) {
+        const line = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(x, -28, z),
+            new THREE.Vector3(x, -31, z),
+          ]),
+          ropeMat
+        );
+        g.add(line);
+      }
+      return g;
+    }
+
+    function buildHuman() {
+      // Skydiver figure, ~6 ft tall, orange jumpsuit
+      const g = new THREE.Group();
+      const suit = new THREE.MeshPhongMaterial({ color: 0xff8a3a, shininess: 25 });
+      const skin = new THREE.MeshPhongMaterial({ color: 0xe8ad88, shininess: 15 });
+      const helmet = new THREE.MeshPhongMaterial({ color: 0x2c2c2c, shininess: 60 });
+      // Body
+      const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.55, 2.0, 6, 12), suit);
+      g.add(torso);
+      // Head
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.45, 18, 14), helmet);
+      head.position.y = 2.0;
+      g.add(head);
+      // Arms (spread for skydiver pose)
+      for (const side of [-1, 1]) {
+        const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 1.6, 6, 8), suit);
+        arm.rotation.z = side * Math.PI / 2.7;
+        arm.position.set(side * 1.15, 0.6, 0);
+        g.add(arm);
+        // Hand
+        const hand = new THREE.Mesh(new THREE.SphereGeometry(0.18, 10, 8), skin);
+        hand.position.set(side * 2.2, 0.0, 0);
+        g.add(hand);
+      }
+      // Legs
+      for (const side of [-1, 1]) {
+        const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.27, 1.8, 6, 8), suit);
+        leg.rotation.z = side * 0.18;
+        leg.position.set(side * 0.45, -2.05, 0);
+        g.add(leg);
+      }
+      return g;
+    }
+
+    function buildBird() {
+      // Eagle-like, ~6 ft wingspan, body horizontal
+      const g = new THREE.Group();
+      const body = new THREE.MeshPhongMaterial({ color: 0x4d361f, shininess: 10 });
+      const dark = new THREE.MeshPhongMaterial({ color: 0x2a1c10, shininess: 10 });
+      const trunk = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, 1.4, 6, 10), body);
+      trunk.rotation.x = Math.PI / 2;
+      g.add(trunk);
+      // Wings — flat boxes extending sideways
+      for (const side of [-1, 1]) {
+        const wing = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.08, 1.0), body);
+        wing.position.set(side * 1.5, 0.05, 0);
+        wing.rotation.y = side * 0.18;
+        g.add(wing);
+        // Wing tip (darker)
+        const tip = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.07, 0.7), dark);
+        tip.position.set(side * 2.95, 0.05, 0.2);
+        tip.rotation.y = side * 0.25;
+        g.add(tip);
+      }
+      // Head
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 14, 10), dark);
+      head.position.set(0, 0.05, -0.95);
+      g.add(head);
+      // Tail
+      const tail = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.06, 0.7), body);
+      tail.position.set(0, 0, 0.95);
+      g.add(tail);
+      return g;
+    }
+
+    function buildBlimp() {
+      // ~200 ft long, ~50 ft diameter cigar
+      const g = new THREE.Group();
+      const hullMat = new THREE.MeshPhongMaterial({ color: 0xd4d4d4, shininess: 60, specular: 0x777777 });
+      const finMat = new THREE.MeshPhongMaterial({ color: 0xb0b0b0, shininess: 40 });
+      const hull = new THREE.Mesh(new THREE.SphereGeometry(25, 36, 22), hullMat);
+      hull.scale.x = 4; // 200 ft total length
+      g.add(hull);
+      // Tail fins (cross)
+      const finV = new THREE.Mesh(new THREE.BoxGeometry(22, 32, 1), finMat);
+      finV.position.set(-90, 0, 0);
+      g.add(finV);
+      const finH = new THREE.Mesh(new THREE.BoxGeometry(22, 1, 32), finMat);
+      finH.position.set(-90, 0, 0);
+      g.add(finH);
+      // Gondola
+      const gondola = new THREE.Mesh(
+        new THREE.BoxGeometry(22, 6, 8),
+        new THREE.MeshLambertMaterial({ color: 0x4a4a4a })
+      );
+      gondola.position.set(15, -23, 0);
+      g.add(gondola);
+      return g;
+    }
+
+    const OBJECTS = {
+      weather: { name: 'Weather balloon (5 ft)',    build: buildWeatherBalloon, zoom: 450 },
+      latex:   { name: 'Latex balloon (1 ft)',      build: buildLatexBalloon,   zoom: 1000 },
+      hotair:  { name: 'Hot air balloon (60 ft)',   build: buildHotAirBalloon,  zoom: 40  },
+      human:   { name: 'Human / skydiver (6 ft)',   build: buildHuman,          zoom: 380 },
+      bird:    { name: 'Bird (6 ft wingspan)',      build: buildBird,           zoom: 380 },
+      blimp:   { name: 'Blimp (200 ft)',            build: buildBlimp,          zoom: 12  },
+    };
+    let currentObject = 'weather';
+
+    const balloonGroup = new THREE.Group();
     scene.add(balloonGroup);
+    function rebuildObject() {
+      balloonGroup.clear();
+      balloonGroup.add(OBJECTS[currentObject].build());
+    }
+    rebuildObject();
 
     function resizeRenderer(r, host, cam) {
       if (!r) return;
@@ -361,12 +548,52 @@
       return sign + Math.abs(r).toLocaleString() + ' ft';
     }
 
+    // Cached ocean texture for the top-down view (regenerated when canvas resizes)
+    let mapBgCanvas = null, mapBgW = 0, mapBgH = 0;
+    function buildMapBg(W, H) {
+      if (mapBgCanvas && mapBgW === W && mapBgH === H) return mapBgCanvas;
+      const c = document.createElement('canvas');
+      c.width = W; c.height = H;
+      const g = c.getContext('2d');
+      g.fillStyle = '#0d2236';
+      g.fillRect(0, 0, W, H);
+      let seed = 1;
+      const r = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+      // Wave patches
+      for (let i = 0; i < 280; i++) {
+        const sh = 30 + (r() * 50) | 0;
+        g.fillStyle = `rgba(${40 + sh},${90 + sh},${130 + sh},${0.10 + r() * 0.22})`;
+        g.beginPath();
+        g.arc(r() * W, r() * H, 4 + r() * 22, 0, Math.PI * 2);
+        g.fill();
+      }
+      // Whitecaps
+      for (let i = 0; i < 120; i++) {
+        g.fillStyle = `rgba(210,230,245,${0.3 + r() * 0.45})`;
+        g.beginPath();
+        g.arc(r() * W, r() * H, 0.4 + r() * 1.3, 0, Math.PI * 2);
+        g.fill();
+      }
+      // Horizontal ripple streaks
+      for (let i = 0; i < 70; i++) {
+        g.strokeStyle = `rgba(140,180,210,${0.08 + r() * 0.14})`;
+        g.lineWidth = 0.5;
+        const y = r() * H;
+        g.beginPath();
+        g.moveTo(r() * W, y);
+        g.lineTo(r() * W + 30 + r() * 50, y + (r() - 0.5) * 2);
+        g.stroke();
+      }
+      mapBgCanvas = c; mapBgW = W; mapBgH = H;
+      return c;
+    }
+
     function drawMap(cx, bz) {
       const { W, H } = mapDims;
       if (W === 0 || H === 0) return;
       mctx.clearRect(0, 0, W, H);
 
-      // World view extents — adapt z to current balloon distance
+      // World view extents — adapt z to current object distance
       const xMin = -16000, xMax = 16000;
       const zMin = -2500, zMax = Math.max(bz + 3000, 14000);
       const sx = W / (xMax - xMin);
@@ -377,17 +604,8 @@
       const X = x => x * s + ox;
       const Z = z => z * s + oz;
 
-      // Background (a calm dark blue to evoke water from above)
-      mctx.fillStyle = '#172a3d';
-      mctx.fillRect(0, 0, W, H);
-
-      // Subtle ocean texture: scattered ripples
-      mctx.fillStyle = 'rgba(160,200,225,0.05)';
-      for (let i = 0; i < 60; i++) {
-        const px = (i * 173) % W;
-        const py = (i * 211) % H;
-        mctx.fillRect(px, py, 8, 1);
-      }
+      // Ocean background
+      mctx.drawImage(buildMapBg(W, H), 0, 0);
 
       // Observer path
       mctx.strokeStyle = '#4cb3ff';
@@ -621,7 +839,9 @@
       lastFrameT = 0; // restart dt accumulation
     }
 
-    // Optional query-string initial values: ?cam=10000&bal=12000&dist=8000&zoom=20&vehicle=helicopter
+    const objectSelect = document.getElementById('object');
+
+    // Optional query-string initial values: ?cam=10000&bal=12000&dist=8000&zoom=20&vehicle=helicopter&obj=blimp
     {
       const q = new URLSearchParams(location.search);
       const c = parseFloat(q.get('cam'));
@@ -634,9 +854,20 @@
       }
       if (Number.isFinite(b)) balSlider.value  = Math.max(BALLOON_HEIGHT_MIN, Math.min(BALLOON_HEIGHT_MAX, b));
       if (Number.isFinite(d)) distSlider.value = Math.max(BALLOON_Z_MIN,      Math.min(BALLOON_Z_MAX,      d));
-      if (Number.isFinite(z)) zoomSlider.value = Math.max(ZOOM_MIN,           Math.min(ZOOM_MAX,           z));
       const qv = q.get('vehicle');
       if (qv && VEHICLES[qv]) currentVehicle = qv;
+      const qo = q.get('obj');
+      if (qo && OBJECTS[qo]) {
+        currentObject = qo;
+        rebuildObject();
+      }
+      // Apply per-object recommended zoom, unless user pinned one in URL
+      if (Number.isFinite(z)) {
+        zoomSlider.value = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+      } else {
+        zoomSlider.value = OBJECTS[currentObject].zoom;
+      }
+      objectSelect.value = currentObject;
     }
     setVehicle(currentVehicle);
 
@@ -649,6 +880,13 @@
     distSlider.addEventListener('input', update);
     zoomSlider.addEventListener('input', update);
     vehicleSelect.addEventListener('change', () => setVehicle(vehicleSelect.value));
+    objectSelect.addEventListener('change', () => {
+      currentObject = objectSelect.value;
+      rebuildObject();
+      // Snap zoom to the new object's recommended value
+      zoomSlider.value = OBJECTS[currentObject].zoom;
+      update();
+    });
 
     function tick(t) {
       // Animate observer position when a vehicle is flying.
