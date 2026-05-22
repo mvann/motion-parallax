@@ -88,6 +88,13 @@
       max-width: 50%;
     }
     .ctrl-head select:focus { outline: 1px solid var(--cam); }
+    .vspeed {
+      color: var(--cam);
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .vspeed.hidden { display: none; }
     .dot {
       display: inline-block; width: 8px; height: 8px;
       border-radius: 50%; margin-right: 6px; vertical-align: middle;
@@ -126,9 +133,10 @@
           <option value="biplane">Biplane</option>
           <option value="manual">Manual</option>
         </select>
+        <span class="vspeed" id="vehicleSpeed">800 mph</span>
         <span class="val" id="camVal">−10,000 ft</span>
       </div>
-      <input id="camSlider" type="range" min="-10000" max="10000" step="50" value="-10000">
+      <input id="camSlider" type="range" min="-10000" max="10000" step="1" value="-10000">
     </div>
     <div class="ctrl-row">
       <div class="ctrl-head">
@@ -726,10 +734,17 @@
     }
 
     const vehicleSelect = document.getElementById('vehicle');
+    const speedEl = document.getElementById('vehicleSpeed');
     function setVehicle(v) {
       if (!VEHICLES[v]) v = 'manual';
       currentVehicle = v;
       if (vehicleSelect.value !== v) vehicleSelect.value = v;
+      if (v === 'manual') {
+        speedEl.classList.add('hidden');
+      } else {
+        speedEl.textContent = VEHICLES[v].mph.toLocaleString() + ' mph';
+        speedEl.classList.remove('hidden');
+      }
       lastFrameT = 0; // restart dt accumulation
     }
 
