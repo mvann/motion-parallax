@@ -154,17 +154,10 @@
     </div>
     <div class="ctrl-row">
       <div class="ctrl-head">
-        <label for="balSlider"><span class="dot" style="background:var(--bal)"></span>Height</label>
+        <label for="balSlider"><span class="dot" style="background:var(--bal)"></span>Balloon height</label>
         <span class="val" id="balVal">13,000 ft</span>
       </div>
       <input id="balSlider" type="range" min="500" max="13000" step="50" value="13000">
-    </div>
-    <div class="ctrl-row">
-      <div class="ctrl-head">
-        <label for="distSlider"><span class="dot" style="background:var(--bal)"></span>Distance</label>
-        <span class="val" id="distVal">10,000 ft</span>
-      </div>
-      <input id="distSlider" type="range" min="500" max="25000" step="50" value="10000">
     </div>
     <div class="ctrl-row">
       <div class="ctrl-head">
@@ -202,12 +195,10 @@
     // ---- World constants (feet) ----
     const CAMERA_Y = 25000;
     const CAMERA_PATH_HALF = 10000;
+    const BALLOON_Z = 10000;             // fixed distance out from the observer's path
     const BALLOON_HEIGHT_MIN = 500;
     const BALLOON_HEIGHT_MAX = 13000;
     const BALLOON_HEIGHT_DEFAULT = 13000;
-    const BALLOON_Z_MIN = 500;
-    const BALLOON_Z_MAX = 25000;
-    const BALLOON_Z_DEFAULT = 10000;
     const ZOOM_MIN = 1;
     const ZOOM_MAX = 1000;
     const ZOOM_DEFAULT = 500;
@@ -296,6 +287,116 @@
       tex.repeat.set(70, 70);  // tile ~5,700 ft per repeat
       const m = new THREE.MeshLambertMaterial({ map: tex, color: 0x9cb8d8 });
       scene.add(new THREE.Mesh(g, m));
+    }
+
+    // ---- Perlin noise (gradient noise) for island heightfield ----
+    const PERM = new Uint8Array(512);
+    (() => {
+      for (let i = 0; i < 256; i++) PERM[i] = i;
+      let s = 1337;
+      const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+      for (let i = 255; i > 0; i--) {
+        const j = Math.floor(rnd() * (i + 1));
+        [PERM[i], PERM[j]] = [PERM[j], PERM[i]];
+      }
+      for (let i = 0; i < 256; i++) PERM[i + 256] = PERM[i];
+    })();
+    function pFade(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+    function pLerp(a, b, t) { return a + (b - a) * t; }
+    function pGrad2(hash, x, y) {
+      const h = hash & 7;
+      const u = h < 4 ? x : y;
+      const v = h < 4 ? y : x;
+      return ((h & 1) ? -u : u) + ((h & 2) ? -v : v);
+    }
+    function perlin2D(x, y) {
+      const X = Math.floor(x) & 255, Y = Math.floor(y) & 255;
+      x -= Math.floor(x); y -= Math.floor(y);
+      const u = pFade(x), v = pFade(y);
+      const A = PERM[X] + Y, B = PERM[X + 1] + Y;
+      return pLerp(
+        pLerp(pGrad2(PERM[A],     x,     y),     pGrad2(PERM[B],     x - 1, y),     u),
+        pLerp(pGrad2(PERM[A + 1], x,     y - 1), pGrad2(PERM[B + 1], x - 1, y - 1), u),
+        v
+      );
+    }
+    function fbm(x, y) {
+      let n = 0, amp = 1, freq = 1, total = 0;
+      for (let i = 0; i < 4; i++) {
+        n += amp * perlin2D(x * freq, y * freq);
+        total += amp;
+        amp *= 0.5; freq *= 2;
+      }
+      return n / total; // ~-0.7..0.7
+    }
+    // Sparse islands: low-frequency placement * high-frequency shape detail.
+    // Total height capped around 25 ft so all three color bands are visible.
+    const PLACEMENT_SCALE = 1 / 8000;
+    const DETAIL_SCALE    = 1 / 1500;
+    const PLACEMENT_CUTOFF = 0.20;
+    function islandHeight(x, z) {
+      const place = perlin2D(x * PLACEMENT_SCALE, z * PLACEMENT_SCALE);
+      if (place <= PLACEMENT_CUTOFF) return 0;
+      const shape = fbm(x * DETAIL_SCALE, z * DETAIL_SCALE);
+      const peak   = (place - PLACEMENT_CUTOFF) * 50;
+      const wobble = (shape + 0.4) * 8;
+      return Math.max(0, peak + wobble - 4);
+    }
+    function colorForHeight(h) {
+      // 0-10 tan, 10-15 gray, 15+ green
+      if (h < 10) return [0.76, 0.66, 0.47];
+      if (h < 15) return [0.56, 0.54, 0.52];
+      return [0.42, 0.54, 0.31];
+    }
+
+    // Islands — heightmap mesh covering the visible ocean
+    {
+      const xMin = -60000, xMax = 60000;
+      const zMin = -10000, zMax = 70000;
+      const NX = 260, NZ = 170;
+      const positions = new Float32Array(NX * NZ * 3);
+      const colors = new Float32Array(NX * NZ * 3);
+      const indices = [];
+      for (let j = 0; j < NZ; j++) {
+        for (let i = 0; i < NX; i++) {
+          const x = xMin + (xMax - xMin) * i / (NX - 1);
+          const z = zMin + (zMax - zMin) * j / (NZ - 1);
+          const h = islandHeight(x, z);
+          const idx = (j * NX + i) * 3;
+          positions[idx]     = x;
+          positions[idx + 1] = h;
+          positions[idx + 2] = z;
+          const c = h > 0 ? colorForHeight(h) : [0.4, 0.5, 0.3]; // unused color when h==0
+          colors[idx]     = c[0];
+          colors[idx + 1] = c[1];
+          colors[idx + 2] = c[2];
+        }
+      }
+      for (let j = 0; j < NZ - 1; j++) {
+        for (let i = 0; i < NX - 1; i++) {
+          const a = j * NX + i;
+          const b = a + 1;
+          const c = (j + 1) * NX + i;
+          const d = c + 1;
+          // Skip cells entirely underwater
+          if (
+            positions[a * 3 + 1] === 0 &&
+            positions[b * 3 + 1] === 0 &&
+            positions[c * 3 + 1] === 0 &&
+            positions[d * 3 + 1] === 0
+          ) continue;
+          indices.push(a, c, b, b, c, d);
+        }
+      }
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geom.setAttribute('color',    new THREE.BufferAttribute(colors,    3));
+      geom.setIndex(indices);
+      geom.computeVertexNormals();
+      const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+      const mesh = new THREE.Mesh(geom, mat);
+      mesh.position.y = 0.4; // tiny lift to avoid z-fighting with the ocean plane
+      scene.add(mesh);
     }
 
     // ---- Object builders (real-world dimensions in feet) ----
@@ -535,11 +636,9 @@
     // ---- Controls ----
     const camSlider = document.getElementById('camSlider');
     const balSlider = document.getElementById('balSlider');
-    const distSlider = document.getElementById('distSlider');
     const zoomSlider = document.getElementById('zoomSlider');
     const camVal = document.getElementById('camVal');
     const balVal = document.getElementById('balVal');
-    const distVal = document.getElementById('distVal');
     const zoomVal = document.getElementById('zoomVal');
 
     function fmt(n) {
@@ -548,54 +647,48 @@
       return sign + Math.abs(r).toLocaleString() + ' ft';
     }
 
-    // Cached ocean texture for the top-down view (regenerated when canvas resizes)
-    let mapBgCanvas = null, mapBgW = 0, mapBgH = 0;
-    function buildMapBg(W, H) {
-      if (mapBgCanvas && mapBgW === W && mapBgH === H) return mapBgCanvas;
+    // Cached island top-down: renders the same islandHeight() field as the 3D mesh,
+    // so the top-down view is unambiguously this ocean.
+    const MAP_X_MIN = -16000, MAP_X_MAX = 16000;
+    const MAP_Z_MIN = -2500,  MAP_Z_MAX = BALLOON_Z + 4000;
+    let islandMapCanvas = null, islandMapW = 0, islandMapH = 0;
+    function buildIslandMap(W, H) {
+      if (islandMapCanvas && islandMapW === W && islandMapH === H) return islandMapCanvas;
       const c = document.createElement('canvas');
       c.width = W; c.height = H;
-      const g = c.getContext('2d');
-      g.fillStyle = '#0d2236';
-      g.fillRect(0, 0, W, H);
-      let seed = 1;
-      const r = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
-      // Wave patches
-      for (let i = 0; i < 280; i++) {
-        const sh = 30 + (r() * 50) | 0;
-        g.fillStyle = `rgba(${40 + sh},${90 + sh},${130 + sh},${0.10 + r() * 0.22})`;
-        g.beginPath();
-        g.arc(r() * W, r() * H, 4 + r() * 22, 0, Math.PI * 2);
-        g.fill();
+      const ctx = c.getContext('2d');
+      const img = ctx.createImageData(W, H);
+      const d = img.data;
+      for (let py = 0; py < H; py++) {
+        const z = MAP_Z_MIN + (MAP_Z_MAX - MAP_Z_MIN) * py / (H - 1);
+        for (let px = 0; px < W; px++) {
+          const x = MAP_X_MIN + (MAP_X_MAX - MAP_X_MIN) * px / (W - 1);
+          const h = islandHeight(x, z);
+          const idx = (py * W + px) * 4;
+          if (h <= 0) {
+            d[idx + 3] = 0; // transparent — let the map background show through
+          } else if (h < 10) {
+            d[idx] = 194; d[idx+1] = 168; d[idx+2] = 120; d[idx+3] = 255;
+          } else if (h < 15) {
+            d[idx] = 142; d[idx+1] = 138; d[idx+2] = 133; d[idx+3] = 255;
+          } else {
+            d[idx] = 106; d[idx+1] = 138; d[idx+2] = 78;  d[idx+3] = 255;
+          }
+        }
       }
-      // Whitecaps
-      for (let i = 0; i < 120; i++) {
-        g.fillStyle = `rgba(210,230,245,${0.3 + r() * 0.45})`;
-        g.beginPath();
-        g.arc(r() * W, r() * H, 0.4 + r() * 1.3, 0, Math.PI * 2);
-        g.fill();
-      }
-      // Horizontal ripple streaks
-      for (let i = 0; i < 70; i++) {
-        g.strokeStyle = `rgba(140,180,210,${0.08 + r() * 0.14})`;
-        g.lineWidth = 0.5;
-        const y = r() * H;
-        g.beginPath();
-        g.moveTo(r() * W, y);
-        g.lineTo(r() * W + 30 + r() * 50, y + (r() - 0.5) * 2);
-        g.stroke();
-      }
-      mapBgCanvas = c; mapBgW = W; mapBgH = H;
+      ctx.putImageData(img, 0, 0);
+      islandMapCanvas = c; islandMapW = W; islandMapH = H;
       return c;
     }
 
-    function drawMap(cx, bz) {
+    function drawMap(cx) {
       const { W, H } = mapDims;
       if (W === 0 || H === 0) return;
       mctx.clearRect(0, 0, W, H);
 
-      // World view extents — adapt z to current object distance
-      const xMin = -16000, xMax = 16000;
-      const zMin = -2500, zMax = Math.max(bz + 3000, 14000);
+      // World view extents
+      const xMin = MAP_X_MIN, xMax = MAP_X_MAX;
+      const zMin = MAP_Z_MIN, zMax = MAP_Z_MAX;
       const sx = W / (xMax - xMin);
       const sz = H / (zMax - zMin);
       const s = Math.min(sx, sz);
@@ -604,8 +697,12 @@
       const X = x => x * s + ox;
       const Z = z => z * s + oz;
 
-      // Ocean background
-      mctx.drawImage(buildMapBg(W, H), 0, 0);
+      // Flat dark-blue ocean background
+      mctx.fillStyle = '#0e2336';
+      mctx.fillRect(0, 0, W, H);
+
+      // Islands rendered from the same noise as the 3D mesh
+      mctx.drawImage(buildIslandMap(W, H), 0, 0);
 
       // Observer path
       mctx.strokeStyle = '#4cb3ff';
@@ -618,11 +715,11 @@
       mctx.setLineDash([]);
 
       // Sight line
-      mctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      mctx.strokeStyle = 'rgba(255,255,255,0.6)';
       mctx.lineWidth = 1;
       mctx.beginPath();
       mctx.moveTo(X(cx), Z(0));
-      mctx.lineTo(X(0), Z(bz));
+      mctx.lineTo(X(0), Z(BALLOON_Z));
       mctx.stroke();
 
       // Aircraft marker — drawn aligned with the path (facing flight direction)
@@ -633,12 +730,12 @@
       drawAircraft(mctx, currentVehicle);
       mctx.restore();
 
-      // Balloon marker (height varies but not visible from above; distance does show)
+      // Balloon marker (height not visible from above)
       mctx.fillStyle = '#ff5a4a';
       mctx.strokeStyle = 'white';
       mctx.lineWidth = 1;
       mctx.beginPath();
-      mctx.arc(X(0), Z(bz), 7, 0, Math.PI * 2);
+      mctx.arc(X(0), Z(BALLOON_Z), 7, 0, Math.PI * 2);
       mctx.fill();
       mctx.stroke();
     }
@@ -805,11 +902,10 @@
     function update() {
       const cx = parseFloat(camSlider.value);
       const bh = parseFloat(balSlider.value);    // balloon height (Y)
-      const bz = parseFloat(distSlider.value);   // balloon distance from path (Z)
       const zoom = parseFloat(zoomSlider.value); // telephoto multiplier
       camera.position.set(cx, CAMERA_Y, 0);
-      balloonGroup.position.set(0, bh, bz);
-      camera.lookAt(0, bh, bz);
+      balloonGroup.position.set(0, bh, BALLOON_Z);
+      camera.lookAt(0, bh, BALLOON_Z);
 
       // Zoomed camera: same pose, FOV = wide FOV / zoom
       zoomCamera.position.copy(camera.position);
@@ -819,9 +915,8 @@
 
       camVal.textContent = fmt(cx);
       balVal.textContent = fmt(bh);
-      distVal.textContent = fmt(bz);
       zoomVal.textContent = zoom.toFixed(0) + '×';
-      drawMap(cx, bz);
+      drawMap(cx);
     }
 
     const vehicleSelect = document.getElementById('vehicle');
@@ -841,19 +936,17 @@
 
     const objectSelect = document.getElementById('object');
 
-    // Optional query-string initial values: ?cam=10000&bal=12000&dist=8000&zoom=20&vehicle=helicopter&obj=blimp
+    // Optional query-string initial values: ?cam=10000&bal=12000&zoom=20&vehicle=helicopter&obj=blimp
     {
       const q = new URLSearchParams(location.search);
       const c = parseFloat(q.get('cam'));
       const b = parseFloat(q.get('bal'));
-      const d = parseFloat(q.get('dist'));
       const z = parseFloat(q.get('zoom'));
       if (Number.isFinite(c)) {
         camSlider.value = Math.max(-CAMERA_PATH_HALF, Math.min(CAMERA_PATH_HALF, c));
         currentVehicle = 'manual';
       }
-      if (Number.isFinite(b)) balSlider.value  = Math.max(BALLOON_HEIGHT_MIN, Math.min(BALLOON_HEIGHT_MAX, b));
-      if (Number.isFinite(d)) distSlider.value = Math.max(BALLOON_Z_MIN,      Math.min(BALLOON_Z_MAX,      d));
+      if (Number.isFinite(b)) balSlider.value = Math.max(BALLOON_HEIGHT_MIN, Math.min(BALLOON_HEIGHT_MAX, b));
       const qv = q.get('vehicle');
       if (qv && VEHICLES[qv]) currentVehicle = qv;
       const qo = q.get('obj');
@@ -877,13 +970,11 @@
       update();
     });
     balSlider.addEventListener('input', update);
-    distSlider.addEventListener('input', update);
     zoomSlider.addEventListener('input', update);
     vehicleSelect.addEventListener('change', () => setVehicle(vehicleSelect.value));
     objectSelect.addEventListener('change', () => {
       currentObject = objectSelect.value;
       rebuildObject();
-      // Snap zoom to the new object's recommended value
       zoomSlider.value = OBJECTS[currentObject].zoom;
       update();
     });
