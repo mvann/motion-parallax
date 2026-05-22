@@ -342,60 +342,58 @@
       const wobble = (shape + 0.4) * 8;
       return Math.max(0, peak + wobble - 4);
     }
-    function colorForHeight(h) {
-      // 0-10 tan, 10-15 gray, 15+ green
-      if (h < 10) return [0.76, 0.66, 0.47];
-      if (h < 15) return [0.56, 0.54, 0.52];
-      return [0.42, 0.54, 0.31];
-    }
-
-    // Islands — heightmap mesh covering the visible ocean
-    {
-      const xMin = -60000, xMax = 60000;
-      const zMin = -10000, zMax = 70000;
-      const NX = 260, NZ = 170;
-      const positions = new Float32Array(NX * NZ * 3);
-      const colors = new Float32Array(NX * NZ * 3);
-      const indices = [];
-      for (let j = 0; j < NZ; j++) {
-        for (let i = 0; i < NX; i++) {
-          const x = xMin + (xMax - xMin) * i / (NX - 1);
-          const z = zMin + (zMax - zMin) * j / (NZ - 1);
+    // Islands — painted flat onto a textured plane just above the ocean.
+    // A 3D heightmap mesh z-fights with the ocean at coastlines (vertices at h=0
+    // are coplanar with the ocean), and tiny triangles alias hard at distance.
+    // The flat approach is also visually faithful: from 25,000 ft up, real
+    // islands appear essentially 2D anyway.
+    const ISLE_XMIN = -80000, ISLE_XMAX = 80000;
+    const ISLE_ZMIN = -10000, ISLE_ZMAX = 80000;
+    function buildIslandsTexture() {
+      const TEX_W = 2048, TEX_H = 1152; // ~78 ft/pixel
+      const c = document.createElement('canvas');
+      c.width = TEX_W; c.height = TEX_H;
+      const ctx = c.getContext('2d');
+      const img = ctx.createImageData(TEX_W, TEX_H);
+      const d = img.data;
+      for (let py = 0; py < TEX_H; py++) {
+        const z = ISLE_ZMIN + (ISLE_ZMAX - ISLE_ZMIN) * py / (TEX_H - 1);
+        for (let px = 0; px < TEX_W; px++) {
+          const x = ISLE_XMIN + (ISLE_XMAX - ISLE_XMIN) * px / (TEX_W - 1);
           const h = islandHeight(x, z);
-          const idx = (j * NX + i) * 3;
-          positions[idx]     = x;
-          positions[idx + 1] = h;
-          positions[idx + 2] = z;
-          const c = h > 0 ? colorForHeight(h) : [0.4, 0.5, 0.3]; // unused color when h==0
-          colors[idx]     = c[0];
-          colors[idx + 1] = c[1];
-          colors[idx + 2] = c[2];
+          const idx = (py * TEX_W + px) * 4;
+          if (h <= 0) {
+            d[idx + 3] = 0;
+          } else if (h < 10) {
+            d[idx] = 194; d[idx+1] = 168; d[idx+2] = 120; d[idx+3] = 255;
+          } else if (h < 15) {
+            d[idx] = 142; d[idx+1] = 138; d[idx+2] = 133; d[idx+3] = 255;
+          } else {
+            d[idx] = 106; d[idx+1] = 138; d[idx+2] = 78;  d[idx+3] = 255;
+          }
         }
       }
-      for (let j = 0; j < NZ - 1; j++) {
-        for (let i = 0; i < NX - 1; i++) {
-          const a = j * NX + i;
-          const b = a + 1;
-          const c = (j + 1) * NX + i;
-          const d = c + 1;
-          // Skip cells entirely underwater
-          if (
-            positions[a * 3 + 1] === 0 &&
-            positions[b * 3 + 1] === 0 &&
-            positions[c * 3 + 1] === 0 &&
-            positions[d * 3 + 1] === 0
-          ) continue;
-          indices.push(a, c, b, b, c, d);
-        }
-      }
-      const geom = new THREE.BufferGeometry();
-      geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      geom.setAttribute('color',    new THREE.BufferAttribute(colors,    3));
-      geom.setIndex(indices);
-      geom.computeVertexNormals();
-      const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
-      const mesh = new THREE.Mesh(geom, mat);
-      mesh.position.y = 0.4; // tiny lift to avoid z-fighting with the ocean plane
+      ctx.putImageData(img, 0, 0);
+      const tex = new THREE.CanvasTexture(c);
+      tex.anisotropy = 8;
+      tex.magFilter = THREE.LinearFilter;
+      tex.minFilter = THREE.LinearMipmapLinearFilter;
+      return tex;
+    }
+    {
+      const w = ISLE_XMAX - ISLE_XMIN;
+      const d = ISLE_ZMAX - ISLE_ZMIN;
+      const g = new THREE.PlaneGeometry(w, d);
+      g.rotateX(-Math.PI / 2);
+      const mat = new THREE.MeshLambertMaterial({
+        map: buildIslandsTexture(),
+        transparent: true,
+        alphaTest: 0.5,
+        side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(g, mat);
+      // Sit a hair above the ocean to avoid coplanar z-fighting.
+      mesh.position.set((ISLE_XMIN + ISLE_XMAX) / 2, 0.6, (ISLE_ZMIN + ISLE_ZMAX) / 2);
       scene.add(mesh);
     }
 
@@ -738,6 +736,39 @@
       mctx.arc(X(0), Z(BALLOON_Z), 7, 0, Math.PI * 2);
       mctx.fill();
       mctx.stroke();
+
+      // Distance scale (Google-Maps style)
+      const scaleFt = pickScaleFt(W * 0.28, s);
+      const scalePx = scaleFt * s;
+      const xL = 12, yB = H - 14;
+      mctx.lineWidth = 2;
+      mctx.strokeStyle = 'rgba(255,255,255,0.95)';
+      mctx.lineCap = 'butt';
+      mctx.beginPath();
+      mctx.moveTo(xL, yB);                     mctx.lineTo(xL + scalePx, yB);
+      mctx.moveTo(xL, yB - 5);                 mctx.lineTo(xL, yB + 5);
+      mctx.moveTo(xL + scalePx, yB - 5);       mctx.lineTo(xL + scalePx, yB + 5);
+      mctx.stroke();
+      const label = scaleFt.toLocaleString() + ' ft';
+      mctx.font = '600 11px -apple-system, sans-serif';
+      mctx.textAlign = 'center';
+      mctx.textBaseline = 'bottom';
+      mctx.lineWidth = 3;
+      mctx.strokeStyle = 'rgba(0,0,0,0.65)';
+      mctx.strokeText(label, xL + scalePx / 2, yB - 7);
+      mctx.fillStyle = 'rgba(255,255,255,0.98)';
+      mctx.fillText(label, xL + scalePx / 2, yB - 7);
+    }
+
+    // Pick a round number whose drawn length is roughly `targetPx`.
+    function pickScaleFt(targetPx, pxPerFt) {
+      const targetFt = targetPx / pxPerFt;
+      const options = [100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000];
+      let best = options[0];
+      for (const o of options) {
+        if (Math.abs(Math.log(o / targetFt)) < Math.abs(Math.log(best / targetFt))) best = o;
+      }
+      return best;
     }
 
     // Aircraft icons (top-down, drawn facing +x, ~30 ft tall on screen)
