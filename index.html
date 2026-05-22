@@ -205,22 +205,68 @@
       scene.add(new THREE.Mesh(g, m));
     }
 
+    // Procedural rocky texture for the mountain face
+    function makeRockTexture() {
+      const size = 512;
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      const g = c.getContext('2d');
+      g.fillStyle = '#6b5a48';
+      g.fillRect(0, 0, size, size);
+      // Mottled patches (lighter and darker)
+      for (let i = 0; i < 4500; i++) {
+        const x = Math.random() * size;
+        const y = Math.random() * size;
+        const r = 2 + Math.random() * 16;
+        const darker = Math.random() < 0.55;
+        if (darker) {
+          const sh = 30 + (Math.random() * 35) | 0;
+          g.fillStyle = `rgba(${sh},${sh-8},${sh-15},${0.18 + Math.random() * 0.35})`;
+        } else {
+          const sh = 110 + (Math.random() * 60) | 0;
+          g.fillStyle = `rgba(${sh+8},${sh-2},${sh-18},${0.15 + Math.random() * 0.3})`;
+        }
+        g.beginPath();
+        g.arc(x, y, r, 0, Math.PI * 2);
+        g.fill();
+      }
+      // Crevice streaks
+      for (let i = 0; i < 140; i++) {
+        g.strokeStyle = `rgba(28,20,14,${0.35 + Math.random() * 0.4})`;
+        g.lineWidth = 0.5 + Math.random() * 1.6;
+        g.beginPath();
+        let x = Math.random() * size, y = Math.random() * size;
+        g.moveTo(x, y);
+        for (let j = 0; j < 5; j++) {
+          x += (Math.random() - 0.5) * 38;
+          y += (Math.random() - 0.5) * 38;
+          g.lineTo(x, y);
+        }
+        g.stroke();
+      }
+      const tex = new THREE.CanvasTexture(c);
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      tex.anisotropy = 4;
+      return tex;
+    }
+
     // Mountains
     {
       const N = 161;
       const xMin = -80000, xMax = 80000;
       const zFront = MOUNTAIN_Z, zBack = MOUNTAIN_Z + MOUNTAIN_THICKNESS;
-      const positions = [], indices = [];
+      const positions = [], uvs = [], indices = [];
       const vbase = [];
+      const UV_SCALE = 1800; // texture repeats every 1800 ft
       for (let i = 0; i < N; i++) {
         const t = i / (N - 1);
         const x = xMin + (xMax - xMin) * t;
         const y = ridgeHeight(x);
         vbase.push(positions.length / 3);
-        positions.push(x, 0, zFront);
-        positions.push(x, y, zFront);
-        positions.push(x, y, zBack);
-        positions.push(x, 0, zBack);
+        positions.push(x, 0, zFront); uvs.push(x / UV_SCALE, 0);
+        positions.push(x, y, zFront); uvs.push(x / UV_SCALE, y / UV_SCALE);
+        positions.push(x, y, zBack);  uvs.push(x / UV_SCALE, y / UV_SCALE);
+        positions.push(x, 0, zBack);  uvs.push(x / UV_SCALE, 0);
       }
       for (let i = 0; i < N - 1; i++) {
         const a = vbase[i], b = vbase[i + 1];
@@ -233,10 +279,40 @@
       }
       const geom = new THREE.BufferGeometry();
       geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geom.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
       geom.setIndex(indices);
       geom.computeVertexNormals();
-      const mat = new THREE.MeshLambertMaterial({ color: 0x6b5a48 });
+      const mat = new THREE.MeshLambertMaterial({ map: makeRockTexture(), color: 0xb0a090 });
       scene.add(new THREE.Mesh(geom, mat));
+
+      // Trees scattered on lower slopes — instanced for performance
+      const treeGeom = new THREE.ConeGeometry(70, 240, 5);
+      const treeMat = new THREE.MeshLambertMaterial({ color: 0x2d4a2a });
+      const TREE_COUNT = 700;
+      const trees = new THREE.InstancedMesh(treeGeom, treeMat, TREE_COUNT);
+      const dummy = new THREE.Object3D();
+      const TREE_LINE = 7000;
+      let placed = 0;
+      // Deterministic-ish pseudo-random so trees don't shuffle each load
+      let seed = 1;
+      const rand = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+      while (placed < TREE_COUNT) {
+        const x = xMin + 4000 + rand() * (xMax - xMin - 8000);
+        const h = ridgeHeight(x);
+        const maxY = Math.min(h * 0.9, TREE_LINE);
+        if (maxY < 600) continue;
+        const y = 400 + rand() * (maxY - 400);
+        const z = zFront - 120 - rand() * 100;
+        const scale = 0.55 + rand() * 0.85;
+        dummy.position.set(x, y + 120 * scale, z);
+        dummy.scale.set(scale, scale, scale);
+        dummy.rotation.y = rand() * Math.PI * 2;
+        dummy.updateMatrix();
+        trees.setMatrixAt(placed, dummy.matrix);
+        placed++;
+      }
+      trees.instanceMatrix.needsUpdate = true;
+      scene.add(trees);
 
       // Snow caps: a second slim mesh above ~7500 ft of the ridge top
       const snowPos = [], snowIdx = [];
