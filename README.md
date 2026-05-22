@@ -4,11 +4,14 @@ A mobile-friendly 3D demo of motion parallax.
 
 Two views stacked vertically:
 
-- **Top — camera POV:** A 3D scene rendered with Three.js. A red hot-air balloon
+- **Camera POV:** A 3D scene rendered with Three.js. A red hot-air balloon
   hovers in front of a 10,000-ft mountain range. The camera flies along a path
   parallel to the range at 10,000 ft elevation and always points at the balloon.
-- **Middle — top-down map:** A schematic showing the camera, its path, the
-  balloon, the balloon's path, the sight line, and the mountain range.
+- **Zoomed (balloon-locked):** Same camera pose, but the FOV is recomputed on
+  every frame so the balloon's diameter takes up half the view height. This
+  isolates the parallax: the balloon stays put, the mountains slide behind it.
+- **Top-down map:** A schematic showing the camera, its path, the balloon, the
+  balloon's path, the sight line, and the mountain range.
 
 Two sliders at the bottom:
 

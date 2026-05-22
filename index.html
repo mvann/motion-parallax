@@ -35,10 +35,12 @@
       overflow: hidden;
       background: #000;
     }
-    #pov { flex: 6 1 0; min-height: 0; }
+    #pov { flex: 3 1 0; min-height: 0; }
     #pov canvas { display: block; width: 100% !important; height: 100% !important; }
+    #zoom { flex: 3 1 0; min-height: 0; border-top: 1px solid #222831; }
+    #zoom canvas { display: block; width: 100% !important; height: 100% !important; }
     #map-wrap {
-      flex: 4 1 0; min-height: 0;
+      flex: 2 1 0; min-height: 0;
       background: #1b212b;
       border-top: 1px solid #222831;
     }
@@ -92,6 +94,9 @@
 <body>
   <div id="pov" class="view">
     <div class="label">Camera POV</div>
+  </div>
+  <div id="zoom" class="view">
+    <div class="label">Zoomed (balloon-locked)</div>
   </div>
   <div id="map-wrap" class="view">
     <div class="label">Top-down</div>
@@ -158,24 +163,33 @@
     }
 
     // ---- POV (Three.js) ----
+    const BALLOON_R = 220;
     const povEl = document.getElementById('pov');
-    let renderer = null;
-    try {
-      renderer = new THREE.WebGLRenderer({ antialias: true });
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-      povEl.appendChild(renderer.domElement);
-    } catch (e) {
-      const msg = document.createElement('div');
-      msg.textContent = 'WebGL not available on this device.';
-      msg.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#8b94a3;font-size:13px;text-align:center;padding:20px';
-      povEl.appendChild(msg);
+    const zoomEl = document.getElementById('zoom');
+    let renderer = null, zoomRenderer = null;
+    function makeRenderer(host) {
+      try {
+        const r = new THREE.WebGLRenderer({ antialias: true });
+        r.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        host.appendChild(r.domElement);
+        return r;
+      } catch (e) {
+        const msg = document.createElement('div');
+        msg.textContent = 'WebGL not available on this device.';
+        msg.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#8b94a3;font-size:13px;text-align:center;padding:20px';
+        host.appendChild(msg);
+        return null;
+      }
     }
+    renderer = makeRenderer(povEl);
+    zoomRenderer = makeRenderer(zoomEl);
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x9ec9f3);
     scene.fog = new THREE.Fog(0xb8d4f0, 25000, 90000);
 
     const camera = new THREE.PerspectiveCamera(55, 1, 10, 250000);
+    const zoomCamera = new THREE.PerspectiveCamera(5, 1, 10, 250000);
 
     // Lights
     const sun = new THREE.DirectionalLight(0xfff1d6, 1.0);
@@ -259,7 +273,7 @@
     const balloonGroup = new THREE.Group();
     {
       const b = new THREE.Mesh(
-        new THREE.SphereGeometry(220, 28, 20),
+        new THREE.SphereGeometry(BALLOON_R, 28, 20),
         new THREE.MeshLambertMaterial({ color: 0xd0342c })
       );
       balloonGroup.add(b);
@@ -287,15 +301,18 @@
     }
     scene.add(balloonGroup);
 
-    function resizePov() {
-      if (!renderer) return;
-      const w = povEl.clientWidth, h = povEl.clientHeight;
+    function resizeRenderer(r, host, cam) {
+      if (!r) return;
+      const w = host.clientWidth, h = host.clientHeight;
       if (w === 0 || h === 0) return;
-      renderer.setSize(w, h, false);
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
+      r.setSize(w, h, false);
+      cam.aspect = w / h;
+      cam.updateProjectionMatrix();
     }
+    function resizePov()  { resizeRenderer(renderer,     povEl,  camera); }
+    function resizeZoom() { resizeRenderer(zoomRenderer, zoomEl, zoomCamera); }
     new ResizeObserver(resizePov).observe(povEl);
+    new ResizeObserver(resizeZoom).observe(zoomEl);
 
     // ---- Top-down (2D canvas) ----
     const mapCanvas = document.getElementById('map');
@@ -435,6 +452,16 @@
       camera.position.set(cx, CAMERA_Y, 0);
       balloonGroup.position.set(0, BALLOON_Y, bz);
       camera.lookAt(0, BALLOON_Y, bz);
+
+      // Zoomed camera: same pose as main camera, FOV picked so balloon
+      // diameter == half the view height.
+      zoomCamera.position.copy(camera.position);
+      zoomCamera.quaternion.copy(camera.quaternion);
+      const dx = cx, dy = CAMERA_Y - BALLOON_Y, dz = -bz;
+      const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+      zoomCamera.fov = THREE.MathUtils.radToDeg(2 * Math.atan(2 * BALLOON_R / dist));
+      zoomCamera.updateProjectionMatrix();
+
       camVal.textContent = fmt(cx);
       balVal.textContent = fmt(bz);
       drawMap(cx, bz);
@@ -452,11 +479,13 @@
     balSlider.addEventListener('input', update);
 
     function tick() {
-      if (renderer) renderer.render(scene, camera);
+      if (renderer)     renderer.render(scene, camera);
+      if (zoomRenderer) zoomRenderer.render(scene, zoomCamera);
       requestAnimationFrame(tick);
     }
 
     resizePov();
+    resizeZoom();
     resizeMap();
     update();
     requestAnimationFrame(tick);
