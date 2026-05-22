@@ -140,10 +140,10 @@
     </div>
     <div class="ctrl-row">
       <div class="ctrl-head">
-        <label for="balSlider"><span class="dot" style="background:var(--bal)"></span>Balloon distance</label>
-        <span class="val" id="balVal">10,000 ft</span>
+        <label for="balSlider"><span class="dot" style="background:var(--bal)"></span>Balloon height</label>
+        <span class="val" id="balVal">7,500 ft</span>
       </div>
-      <input id="balSlider" type="range" min="10000" max="19995" step="10" value="10000">
+      <input id="balSlider" type="range" min="500" max="15000" step="50" value="7500">
     </div>
   </div>
 
@@ -171,37 +171,12 @@
     let lastFrameT = 0;
 
     // ---- World constants (feet) ----
-    const MOUNTAIN_Z = 20000;
-    const MOUNTAIN_THICKNESS = 2500;
-    const MOUNTAIN_HEIGHT = 10000;
     const CAMERA_Y = 10000;
     const CAMERA_PATH_HALF = 10000;
-    const BALLOON_Y = 7500;
-    const BALLOON_Z_MIN = 10000;
-    const BALLOON_Z_MAX = MOUNTAIN_Z - 5;
-
-    // Procedural ridge peaks (shared by 3D mesh and top-down silhouette)
-    const PEAKS = [
-      { x: -42000, h: 8800, w: 6500 },
-      { x: -28000, h: 9700, w: 5500 },
-      { x: -15000, h: 9200, w: 6000 },
-      { x:  -3000, h: 9900, w: 5200 },
-      { x:   8000, h: 8400, w: 4800 },
-      { x:  19000, h: 9600, w: 6200 },
-      { x:  31000, h: 8900, w: 5400 },
-      { x:  44000, h: 9300, w: 6000 },
-    ];
-    function ridgeHeight(x) {
-      let v = 4200
-            + 1100 * Math.sin(x * 0.00012 + 1.1)
-            + 700  * Math.sin(x * 0.00033 + 2.3)
-            + 400  * Math.sin(x * 0.00081 + 0.4);
-      for (const p of PEAKS) {
-        const d = (x - p.x) / p.w;
-        v += (p.h - 4200) * Math.exp(-d * d);
-      }
-      return Math.max(800, Math.min(MOUNTAIN_HEIGHT, v));
-    }
+    const BALLOON_Z = 10000;             // fixed distance out from the observer's path
+    const BALLOON_HEIGHT_MIN = 500;
+    const BALLOON_HEIGHT_MAX = 15000;
+    const BALLOON_HEIGHT_DEFAULT = 7500;
 
     // ---- POV (Three.js) ----
     const BALLOON_R = 220;
@@ -238,51 +213,39 @@
     scene.add(sun);
     scene.add(new THREE.HemisphereLight(0xcfe6ff, 0x4a3a2a, 0.55));
 
-    // Ground
-    {
-      const g = new THREE.PlaneGeometry(400000, 400000, 1, 1);
-      g.rotateX(-Math.PI / 2);
-      const m = new THREE.MeshLambertMaterial({ color: 0x6f8a4d });
-      scene.add(new THREE.Mesh(g, m));
-    }
-
-    // Procedural rocky texture for the mountain face
-    function makeRockTexture() {
+    // Procedural ocean texture
+    function makeOceanTexture() {
       const size = 512;
       const c = document.createElement('canvas');
       c.width = c.height = size;
       const g = c.getContext('2d');
-      g.fillStyle = '#6b5a48';
+      g.fillStyle = '#1c4a74';
       g.fillRect(0, 0, size, size);
-      // Mottled patches (lighter and darker)
-      for (let i = 0; i < 4500; i++) {
-        const x = Math.random() * size;
-        const y = Math.random() * size;
-        const r = 2 + Math.random() * 16;
-        const darker = Math.random() < 0.55;
-        if (darker) {
-          const sh = 30 + (Math.random() * 35) | 0;
-          g.fillStyle = `rgba(${sh},${sh-8},${sh-15},${0.18 + Math.random() * 0.35})`;
-        } else {
-          const sh = 110 + (Math.random() * 60) | 0;
-          g.fillStyle = `rgba(${sh+8},${sh-2},${sh-18},${0.15 + Math.random() * 0.3})`;
-        }
+      // Wavy lighter patches
+      for (let i = 0; i < 1800; i++) {
+        const x = Math.random() * size, y = Math.random() * size;
+        const r = 4 + Math.random() * 18;
+        const sh = 30 + (Math.random() * 40) | 0;
+        g.fillStyle = `rgba(${70 + sh},${120 + sh},${165 + sh},${0.10 + Math.random() * 0.22})`;
         g.beginPath();
         g.arc(x, y, r, 0, Math.PI * 2);
         g.fill();
       }
-      // Crevice streaks
-      for (let i = 0; i < 140; i++) {
-        g.strokeStyle = `rgba(28,20,14,${0.35 + Math.random() * 0.4})`;
-        g.lineWidth = 0.5 + Math.random() * 1.6;
+      // Whitecaps
+      for (let i = 0; i < 700; i++) {
+        g.fillStyle = `rgba(255,255,255,${0.35 + Math.random() * 0.55})`;
         g.beginPath();
-        let x = Math.random() * size, y = Math.random() * size;
-        g.moveTo(x, y);
-        for (let j = 0; j < 5; j++) {
-          x += (Math.random() - 0.5) * 38;
-          y += (Math.random() - 0.5) * 38;
-          g.lineTo(x, y);
-        }
+        g.arc(Math.random() * size, Math.random() * size, 0.4 + Math.random() * 1.4, 0, Math.PI * 2);
+        g.fill();
+      }
+      // Horizontal ripple streaks (give a sense of swell direction)
+      for (let i = 0; i < 220; i++) {
+        g.strokeStyle = `rgba(190,215,235,${0.08 + Math.random() * 0.15})`;
+        g.lineWidth = 0.5;
+        const y = Math.random() * size;
+        g.beginPath();
+        g.moveTo(Math.random() * size, y);
+        g.lineTo(Math.random() * size + 30 + Math.random() * 60, y + (Math.random() - 0.5) * 2);
         g.stroke();
       }
       const tex = new THREE.CanvasTexture(c);
@@ -291,99 +254,14 @@
       return tex;
     }
 
-    // Mountains
+    // Ocean
     {
-      const N = 161;
-      const xMin = -80000, xMax = 80000;
-      const zFront = MOUNTAIN_Z, zBack = MOUNTAIN_Z + MOUNTAIN_THICKNESS;
-      const positions = [], uvs = [], indices = [];
-      const vbase = [];
-      const UV_SCALE = 1800; // texture repeats every 1800 ft
-      for (let i = 0; i < N; i++) {
-        const t = i / (N - 1);
-        const x = xMin + (xMax - xMin) * t;
-        const y = ridgeHeight(x);
-        vbase.push(positions.length / 3);
-        positions.push(x, 0, zFront); uvs.push(x / UV_SCALE, 0);
-        positions.push(x, y, zFront); uvs.push(x / UV_SCALE, y / UV_SCALE);
-        positions.push(x, y, zBack);  uvs.push(x / UV_SCALE, y / UV_SCALE);
-        positions.push(x, 0, zBack);  uvs.push(x / UV_SCALE, 0);
-      }
-      for (let i = 0; i < N - 1; i++) {
-        const a = vbase[i], b = vbase[i + 1];
-        // Front face
-        indices.push(a + 0, a + 1, b + 1, a + 0, b + 1, b + 0);
-        // Top face
-        indices.push(a + 1, a + 2, b + 2, a + 1, b + 2, b + 1);
-        // Back face
-        indices.push(a + 3, b + 3, b + 2, a + 3, b + 2, a + 2);
-      }
-      const geom = new THREE.BufferGeometry();
-      geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-      geom.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-      geom.setIndex(indices);
-      geom.computeVertexNormals();
-      const mat = new THREE.MeshLambertMaterial({ map: makeRockTexture(), color: 0xb0a090 });
-      scene.add(new THREE.Mesh(geom, mat));
-
-      // Trees scattered on lower slopes — instanced for performance
-      const treeGeom = new THREE.ConeGeometry(70, 240, 5);
-      const treeMat = new THREE.MeshLambertMaterial({ color: 0x2d4a2a });
-      const TREE_COUNT = 700;
-      const trees = new THREE.InstancedMesh(treeGeom, treeMat, TREE_COUNT);
-      const dummy = new THREE.Object3D();
-      const TREE_LINE = 7000;
-      let placed = 0;
-      // Deterministic-ish pseudo-random so trees don't shuffle each load
-      let seed = 1;
-      const rand = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
-      while (placed < TREE_COUNT) {
-        const x = xMin + 4000 + rand() * (xMax - xMin - 8000);
-        const h = ridgeHeight(x);
-        const maxY = Math.min(h * 0.9, TREE_LINE);
-        if (maxY < 600) continue;
-        const y = 400 + rand() * (maxY - 400);
-        const z = zFront - 120 - rand() * 100;
-        const scale = 0.55 + rand() * 0.85;
-        dummy.position.set(x, y + 120 * scale, z);
-        dummy.scale.set(scale, scale, scale);
-        dummy.rotation.y = rand() * Math.PI * 2;
-        dummy.updateMatrix();
-        trees.setMatrixAt(placed, dummy.matrix);
-        placed++;
-      }
-      trees.instanceMatrix.needsUpdate = true;
-      scene.add(trees);
-
-      // Snow caps: a second slim mesh above ~7500 ft of the ridge top
-      const snowPos = [], snowIdx = [];
-      const snowBase = [];
-      for (let i = 0; i < N; i++) {
-        const t = i / (N - 1);
-        const x = xMin + (xMax - xMin) * t;
-        const y = ridgeHeight(x);
-        const snowLine = 7500;
-        const yLow = Math.max(snowLine, y - 1500);
-        snowBase.push(snowPos.length / 3);
-        snowPos.push(x, yLow, zFront);
-        snowPos.push(x, y,    zFront);
-        snowPos.push(x, y,    zBack);
-        snowPos.push(x, yLow, zBack);
-      }
-      for (let i = 0; i < N - 1; i++) {
-        const a = snowBase[i], b = snowBase[i + 1];
-        const ya = snowPos[(a + 1) * 3 + 1], yb = snowPos[(b + 1) * 3 + 1];
-        if (ya < 7600 && yb < 7600) continue;
-        snowIdx.push(a + 1, a + 2, b + 2, a + 1, b + 2, b + 1);
-      }
-      const sgeom = new THREE.BufferGeometry();
-      sgeom.setAttribute('position', new THREE.Float32BufferAttribute(snowPos, 3));
-      sgeom.setIndex(snowIdx);
-      sgeom.computeVertexNormals();
-      const smat = new THREE.MeshLambertMaterial({ color: 0xf5f7fb });
-      const snow = new THREE.Mesh(sgeom, smat);
-      snow.position.y = 0.5;
-      scene.add(snow);
+      const g = new THREE.PlaneGeometry(400000, 400000, 1, 1);
+      g.rotateX(-Math.PI / 2);
+      const tex = makeOceanTexture();
+      tex.repeat.set(70, 70);  // tile ~5,700 ft per repeat
+      const m = new THREE.MeshLambertMaterial({ map: tex, color: 0x9cb8d8 });
+      scene.add(new THREE.Mesh(g, m));
     }
 
     // Balloon
@@ -458,14 +336,14 @@
       return sign + Math.abs(r).toLocaleString() + ' ft';
     }
 
-    function drawMap(cx, bz) {
+    function drawMap(cx) {
       const { W, H } = mapDims;
       if (W === 0 || H === 0) return;
       mctx.clearRect(0, 0, W, H);
 
       // World view extents
       const xMin = -16000, xMax = 16000;
-      const zMin = -2500, zMax = MOUNTAIN_Z + MOUNTAIN_THICKNESS + 2500;
+      const zMin = -2500, zMax = BALLOON_Z + 4000;
       const sx = W / (xMax - xMin);
       const sz = H / (zMax - zMin);
       const s = Math.min(sx, sz);
@@ -474,56 +352,25 @@
       const X = x => x * s + ox;
       const Z = z => z * s + oz;
 
-      // Background
-      mctx.fillStyle = '#1b212b';
+      // Background (a calm dark blue to evoke water from above)
+      mctx.fillStyle = '#172a3d';
       mctx.fillRect(0, 0, W, H);
 
-      // Mountain band (silhouette using ridge function)
-      mctx.fillStyle = '#3c3328';
-      mctx.beginPath();
-      mctx.moveTo(X(xMin), Z(MOUNTAIN_Z + MOUNTAIN_THICKNESS));
-      mctx.lineTo(X(xMax), Z(MOUNTAIN_Z + MOUNTAIN_THICKNESS));
-      const step = 400;
-      // bumpy front edge — proxy depth based on local "height" (taller peaks bulge a bit forward)
-      const points = [];
-      for (let x = xMax; x >= xMin; x -= step) {
-        const h = ridgeHeight(x);
-        const bulge = (h - 4200) / (MOUNTAIN_HEIGHT - 4200) * 600;
-        points.push([x, MOUNTAIN_Z - bulge]);
+      // Subtle ocean texture: scattered ripples
+      mctx.fillStyle = 'rgba(160,200,225,0.05)';
+      for (let i = 0; i < 60; i++) {
+        const px = (i * 173) % W;
+        const py = (i * 211) % H;
+        mctx.fillRect(px, py, 8, 1);
       }
-      for (const [x, z] of points) mctx.lineTo(X(x), Z(z));
-      mctx.closePath();
-      mctx.fill();
-      mctx.strokeStyle = '#7a6a55';
-      mctx.lineWidth = 1;
-      mctx.beginPath();
-      for (let i = 0; i < points.length; i++) {
-        const [x, z] = points[i];
-        if (i === 0) mctx.moveTo(X(x), Z(z));
-        else mctx.lineTo(X(x), Z(z));
-      }
-      mctx.stroke();
 
-      // Mountain label
-      mctx.fillStyle = 'rgba(255,255,255,0.4)';
-      mctx.font = '10px -apple-system, sans-serif';
-      mctx.textAlign = 'center';
-      mctx.fillText('MOUNTAINS', X(0), Z(MOUNTAIN_Z + MOUNTAIN_THICKNESS / 2) + 3);
-
-      // Camera path
+      // Observer path
       mctx.strokeStyle = '#4cb3ff';
       mctx.lineWidth = 2;
       mctx.setLineDash([6, 4]);
       mctx.beginPath();
       mctx.moveTo(X(-CAMERA_PATH_HALF), Z(0));
       mctx.lineTo(X( CAMERA_PATH_HALF), Z(0));
-      mctx.stroke();
-
-      // Balloon path
-      mctx.strokeStyle = '#ff5a4a';
-      mctx.beginPath();
-      mctx.moveTo(X(0), Z(BALLOON_Z_MIN));
-      mctx.lineTo(X(0), Z(BALLOON_Z_MAX));
       mctx.stroke();
       mctx.setLineDash([]);
 
@@ -532,10 +379,10 @@
       mctx.lineWidth = 1;
       mctx.beginPath();
       mctx.moveTo(X(cx), Z(0));
-      mctx.lineTo(X(0), Z(bz));
+      mctx.lineTo(X(0), Z(BALLOON_Z));
       mctx.stroke();
 
-      // Aircraft marker — drawn aligned with the camera path (facing flight direction)
+      // Aircraft marker — drawn aligned with the path (facing flight direction)
       const cax = X(cx), caz = Z(0);
       mctx.save();
       mctx.translate(cax, caz);
@@ -543,12 +390,12 @@
       drawAircraft(mctx, currentVehicle);
       mctx.restore();
 
-      // Balloon marker
+      // Balloon marker (fixed position; height varies but not visible from above)
       mctx.fillStyle = '#ff5a4a';
       mctx.strokeStyle = 'white';
       mctx.lineWidth = 1;
       mctx.beginPath();
-      mctx.arc(X(0), Z(bz), 6, 0, Math.PI * 2);
+      mctx.arc(X(0), Z(BALLOON_Z), 7, 0, Math.PI * 2);
       mctx.fill();
       mctx.stroke();
     }
@@ -714,23 +561,23 @@
 
     function update() {
       const cx = parseFloat(camSlider.value);
-      const bz = parseFloat(balSlider.value);
+      const bh = parseFloat(balSlider.value); // balloon height (Y)
       camera.position.set(cx, CAMERA_Y, 0);
-      balloonGroup.position.set(0, BALLOON_Y, bz);
-      camera.lookAt(0, BALLOON_Y, bz);
+      balloonGroup.position.set(0, bh, BALLOON_Z);
+      camera.lookAt(0, bh, BALLOON_Z);
 
       // Zoomed camera: same pose as main camera, FOV picked so balloon
       // diameter == half the view height.
       zoomCamera.position.copy(camera.position);
       zoomCamera.quaternion.copy(camera.quaternion);
-      const dx = cx, dy = CAMERA_Y - BALLOON_Y, dz = -bz;
+      const dx = cx, dy = CAMERA_Y - bh, dz = -BALLOON_Z;
       const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
       zoomCamera.fov = THREE.MathUtils.radToDeg(2 * Math.atan(2 * BALLOON_R / dist));
       zoomCamera.updateProjectionMatrix();
 
       camVal.textContent = fmt(cx);
-      balVal.textContent = fmt(bz);
-      drawMap(cx, bz);
+      balVal.textContent = fmt(bh);
+      drawMap(cx);
     }
 
     const vehicleSelect = document.getElementById('vehicle');
@@ -748,7 +595,7 @@
       lastFrameT = 0; // restart dt accumulation
     }
 
-    // Optional query-string initial values: ?cam=10000&bal=15000&vehicle=helicopter
+    // Optional query-string initial values: ?cam=10000&bal=12000&vehicle=helicopter
     {
       const q = new URLSearchParams(location.search);
       const c = parseFloat(q.get('cam')), b = parseFloat(q.get('bal'));
@@ -756,7 +603,7 @@
         camSlider.value = Math.max(-CAMERA_PATH_HALF, Math.min(CAMERA_PATH_HALF, c));
         currentVehicle = 'manual';
       }
-      if (Number.isFinite(b)) balSlider.value = Math.max(BALLOON_Z_MIN, Math.min(BALLOON_Z_MAX, b));
+      if (Number.isFinite(b)) balSlider.value = Math.max(BALLOON_HEIGHT_MIN, Math.min(BALLOON_HEIGHT_MAX, b));
       const qv = q.get('vehicle');
       if (qv && VEHICLES[qv]) currentVehicle = qv;
     }

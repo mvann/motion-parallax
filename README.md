@@ -5,25 +5,21 @@ A mobile-friendly 3D demo of motion parallax.
 Two views stacked vertically:
 
 - **Camera POV:** A 3D scene rendered with Three.js. A red hot-air balloon
-  hovers in front of a 10,000-ft mountain range. The camera flies along a path
-  parallel to the range at 10,000 ft elevation and always points at the balloon.
+  hovers over the open ocean 10,000 ft out from an observer flying along a path
+  at 10,000 ft elevation. The observer's camera always points at the balloon.
 - **Zoomed (balloon-locked):** Same camera pose, but the FOV is recomputed on
   every frame so the balloon's diameter takes up half the view height. This
-  isolates the parallax: the balloon stays put, the mountains slide behind it.
-- **Top-down map:** A schematic showing the camera, its path, the balloon, the
-  balloon's path, the sight line, and the mountain range.
+  isolates the parallax: the balloon stays put, the horizon slides behind it.
+- **Top-down map:** A schematic showing the observer (as a vehicle icon), its
+  path, the balloon, and the sight line.
 
-Two sliders at the bottom:
+Controls at the bottom:
 
-1. **Camera position** — moves the camera along its path (−10,000 ft to +10,000 ft).
-2. **Balloon distance** — moves the balloon perpendicular to the camera's path,
-   from the middle of the scene (10,000 ft away from each side) to almost
-   touching the mountain base.
-
-Move the camera slider with the balloon near the middle to see strong parallax
-(the balloon sweeps the view much faster than the distant mountains). Push the
-balloon toward the mountains and the parallax of the balloon vs the mountains
-collapses — that's the whole point.
+1. **Observer Position** — moves the observer along its path (−10,000 ft to
+   +10,000 ft). An aircraft dropdown picks the vehicle (fighter, commercial,
+   helicopter, UAV, biplane, or manual) and auto-animates the position at the
+   chosen cruise speed; touching the slider drops to manual.
+2. **Balloon height** — sets the balloon's altitude (500 ft to 15,000 ft).
 
 ## Run
 
