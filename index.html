@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Motion Parallax Demo</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0e1116;
+      --panel: #161a21;
+      --text: #e6e8eb;
+      --muted: #8b94a3;
+      --cam: #4cb3ff;
+      --bal: #ff5a4a;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      overscroll-behavior: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    body {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      height: 100dvh;
+      width: 100vw;
+    }
+    .view {
+      position: relative;
+      width: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+    #pov { flex: 6 1 0; min-height: 0; }
+    #pov canvas { display: block; width: 100% !important; height: 100% !important; }
+    #map-wrap {
+      flex: 4 1 0; min-height: 0;
+      background: #1b212b;
+      border-top: 1px solid #222831;
+    }
+    #map { width: 100%; height: 100%; display: block; }
+    .label {
+      position: absolute;
+      top: 8px; left: 10px;
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      color: rgba(255,255,255,0.7);
+      text-transform: uppercase;
+      pointer-events: none;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+      font-weight: 600;
+    }
+    .controls {
+      flex: 0 0 auto;
+      padding: 10px 14px calc(10px + env(safe-area-inset-bottom)) 14px;
+      background: var(--panel);
+      border-top: 1px solid #222831;
+    }
+    .ctrl-row { margin-bottom: 6px; }
+    .ctrl-row:last-child { margin-bottom: 0; }
+    .ctrl-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .ctrl-head .val {
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+      font-size: 12px;
+    }
+    .dot {
+      display: inline-block; width: 8px; height: 8px;
+      border-radius: 50%; margin-right: 6px; vertical-align: middle;
+    }
+    input[type="range"] {
+      width: 100%;
+      height: 28px;
+      margin: 0;
+      background: transparent;
+      display: block;
+    }
+    input#camSlider { accent-color: var(--cam); }
+    input#balSlider { accent-color: var(--bal); }
+  </style>
+</head>
+<body>
+  <div id="pov" class="view">
+    <div class="label">Camera POV</div>
+  </div>
+  <div id="map-wrap" class="view">
+    <div class="label">Top-down</div>
+    <canvas id="map"></canvas>
+  </div>
+  <div class="controls">
+    <div class="ctrl-row">
+      <div class="ctrl-head">
+        <label for="camSlider"><span class="dot" style="background:var(--cam)"></span>Camera position</label>
+        <span class="val" id="camVal">−10,000 ft</span>
+      </div>
+      <input id="camSlider" type="range" min="-10000" max="10000" step="50" value="-10000">
+    </div>
+    <div class="ctrl-row">
+      <div class="ctrl-head">
+        <label for="balSlider"><span class="dot" style="background:var(--bal)"></span>Balloon distance</label>
+        <span class="val" id="balVal">10,000 ft</span>
+      </div>
+      <input id="balSlider" type="range" min="10000" max="19995" step="10" value="10000">
+    </div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./vendor/three.module.min.js"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+
+    // ---- World constants (feet) ----
+    const MOUNTAIN_Z = 20000;
+    const MOUNTAIN_THICKNESS = 2500;
+    const MOUNTAIN_HEIGHT = 10000;
+    const CAMERA_Y = 10000;
+    const CAMERA_PATH_HALF = 10000;
+    const BALLOON_Y = 5000;
+    const BALLOON_Z_MIN = 10000;
+    const BALLOON_Z_MAX = MOUNTAIN_Z - 5;
+
+    // Procedural ridge peaks (shared by 3D mesh and top-down silhouette)
+    const PEAKS = [
+      { x: -42000, h: 8800, w: 6500 },
+      { x: -28000, h: 9700, w: 5500 },
+      { x: -15000, h: 9200, w: 6000 },
+      { x:  -3000, h: 9900, w: 5200 },
+      { x:   8000, h: 8400, w: 4800 },
+      { x:  19000, h: 9600, w: 6200 },
+      { x:  31000, h: 8900, w: 5400 },
+      { x:  44000, h: 9300, w: 6000 },
+    ];
+    function ridgeHeight(x) {
+      let v = 4200
+            + 1100 * Math.sin(x * 0.00012 + 1.1)
+            + 700  * Math.sin(x * 0.00033 + 2.3)
+            + 400  * Math.sin(x * 0.00081 + 0.4);
+      for (const p of PEAKS) {
+        const d = (x - p.x) / p.w;
+        v += (p.h - 4200) * Math.exp(-d * d);
+      }
+      return Math.max(800, Math.min(MOUNTAIN_HEIGHT, v));
+    }
+
+    // ---- POV (Three.js) ----
+    const povEl = document.getElementById('pov');
+    let renderer = null;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      povEl.appendChild(renderer.domElement);
+    } catch (e) {
+      const msg = document.createElement('div');
+      msg.textContent = 'WebGL not available on this device.';
+      msg.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#8b94a3;font-size:13px;text-align:center;padding:20px';
+      povEl.appendChild(msg);
+    }
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x9ec9f3);
+    scene.fog = new THREE.Fog(0xb8d4f0, 25000, 90000);
+
+    const camera = new THREE.PerspectiveCamera(55, 1, 10, 250000);
+
+    // Lights
+    const sun = new THREE.DirectionalLight(0xfff1d6, 1.0);
+    sun.position.set(-20000, 30000, -8000);
+    scene.add(sun);
+    scene.add(new THREE.HemisphereLight(0xcfe6ff, 0x4a3a2a, 0.55));
+
+    // Ground
+    {
+      const g = new THREE.PlaneGeometry(400000, 400000, 1, 1);
+      g.rotateX(-Math.PI / 2);
+      const m = new THREE.MeshLambertMaterial({ color: 0x6f8a4d });
+      scene.add(new THREE.Mesh(g, m));
+    }
+
+    // Mountains
+    {
+      const N = 161;
+      const xMin = -80000, xMax = 80000;
+      const zFront = MOUNTAIN_Z, zBack = MOUNTAIN_Z + MOUNTAIN_THICKNESS;
+      const positions = [], indices = [];
+      const vbase = [];
+      for (let i = 0; i < N; i++) {
+        const t = i / (N - 1);
+        const x = xMin + (xMax - xMin) * t;
+        const y = ridgeHeight(x);
+        vbase.push(positions.length / 3);
+        positions.push(x, 0, zFront);
+        positions.push(x, y, zFront);
+        positions.push(x, y, zBack);
+        positions.push(x, 0, zBack);
+      }
+      for (let i = 0; i < N - 1; i++) {
+        const a = vbase[i], b = vbase[i + 1];
+        // Front face
+        indices.push(a + 0, a + 1, b + 1, a + 0, b + 1, b + 0);
+        // Top face
+        indices.push(a + 1, a + 2, b + 2, a + 1, b + 2, b + 1);
+        // Back face
+        indices.push(a + 3, b + 3, b + 2, a + 3, b + 2, a + 2);
+      }
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geom.setIndex(indices);
+      geom.computeVertexNormals();
+      const mat = new THREE.MeshLambertMaterial({ color: 0x6b5a48 });
+      scene.add(new THREE.Mesh(geom, mat));
+
+      // Snow caps: a second slim mesh above ~7500 ft of the ridge top
+      const snowPos = [], snowIdx = [];
+      const snowBase = [];
+      for (let i = 0; i < N; i++) {
+        const t = i / (N - 1);
+        const x = xMin + (xMax - xMin) * t;
+        const y = ridgeHeight(x);
+        const snowLine = 7500;
+        const yLow = Math.max(snowLine, y - 1500);
+        snowBase.push(snowPos.length / 3);
+        snowPos.push(x, yLow, zFront);
+        snowPos.push(x, y,    zFront);
+        snowPos.push(x, y,    zBack);
+        snowPos.push(x, yLow, zBack);
+      }
+      for (let i = 0; i < N - 1; i++) {
+        const a = snowBase[i], b = snowBase[i + 1];
+        const ya = snowPos[(a + 1) * 3 + 1], yb = snowPos[(b + 1) * 3 + 1];
+        if (ya < 7600 && yb < 7600) continue;
+        snowIdx.push(a + 1, a + 2, b + 2, a + 1, b + 2, b + 1);
+      }
+      const sgeom = new THREE.BufferGeometry();
+      sgeom.setAttribute('position', new THREE.Float32BufferAttribute(snowPos, 3));
+      sgeom.setIndex(snowIdx);
+      sgeom.computeVertexNormals();
+      const smat = new THREE.MeshLambertMaterial({ color: 0xf5f7fb });
+      const snow = new THREE.Mesh(sgeom, smat);
+      snow.position.y = 0.5;
+      scene.add(snow);
+    }
+
+    // Balloon
+    const balloonGroup = new THREE.Group();
+    {
+      const b = new THREE.Mesh(
+        new THREE.SphereGeometry(220, 28, 20),
+        new THREE.MeshLambertMaterial({ color: 0xd0342c })
+      );
+      balloonGroup.add(b);
+      const basket = new THREE.Mesh(
+        new THREE.BoxGeometry(140, 110, 140),
+        new THREE.MeshLambertMaterial({ color: 0x7a4a26 })
+      );
+      basket.position.y = -340;
+      balloonGroup.add(basket);
+      // ropes (thin lines)
+      const ropeMat = new THREE.LineBasicMaterial({ color: 0x2a1a10 });
+      const ropePts = [
+        [ 70, -220,  70], [ 70, -285,  70],
+        [-70, -220,  70], [-70, -285,  70],
+        [ 70, -220, -70], [ 70, -285, -70],
+        [-70, -220, -70], [-70, -285, -70],
+      ];
+      for (let i = 0; i < ropePts.length; i += 2) {
+        const geo = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(...ropePts[i]),
+          new THREE.Vector3(...ropePts[i + 1]),
+        ]);
+        balloonGroup.add(new THREE.Line(geo, ropeMat));
+      }
+    }
+    scene.add(balloonGroup);
+
+    function resizePov() {
+      if (!renderer) return;
+      const w = povEl.clientWidth, h = povEl.clientHeight;
+      if (w === 0 || h === 0) return;
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+    }
+    new ResizeObserver(resizePov).observe(povEl);
+
+    // ---- Top-down (2D canvas) ----
+    const mapCanvas = document.getElementById('map');
+    const mctx = mapCanvas.getContext('2d');
+    let mapDims = { W: 0, H: 0 };
+
+    function resizeMap() {
+      const dpr = Math.min(window.devicePixelRatio, 2);
+      const w = mapCanvas.clientWidth, h = mapCanvas.clientHeight;
+      mapCanvas.width = Math.floor(w * dpr);
+      mapCanvas.height = Math.floor(h * dpr);
+      mctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      mapDims = { W: w, H: h };
+    }
+    new ResizeObserver(() => { resizeMap(); update(); }).observe(mapCanvas);
+
+    // ---- Controls ----
+    const camSlider = document.getElementById('camSlider');
+    const balSlider = document.getElementById('balSlider');
+    const camVal = document.getElementById('camVal');
+    const balVal = document.getElementById('balVal');
+
+    function fmt(n) {
+      const r = Math.round(n);
+      const sign = r < 0 ? '−' : '';
+      return sign + Math.abs(r).toLocaleString() + ' ft';
+    }
+
+    function drawMap(cx, bz) {
+      const { W, H } = mapDims;
+      if (W === 0 || H === 0) return;
+      mctx.clearRect(0, 0, W, H);
+
+      // World view extents
+      const xMin = -16000, xMax = 16000;
+      const zMin = -2500, zMax = MOUNTAIN_Z + MOUNTAIN_THICKNESS + 2500;
+      const sx = W / (xMax - xMin);
+      const sz = H / (zMax - zMin);
+      const s = Math.min(sx, sz);
+      const ox = (W - (xMax - xMin) * s) / 2 - xMin * s;
+      const oz = (H - (zMax - zMin) * s) / 2 - zMin * s;
+      const X = x => x * s + ox;
+      const Z = z => z * s + oz;
+
+      // Background
+      mctx.fillStyle = '#1b212b';
+      mctx.fillRect(0, 0, W, H);
+
+      // Mountain band (silhouette using ridge function)
+      mctx.fillStyle = '#3c3328';
+      mctx.beginPath();
+      mctx.moveTo(X(xMin), Z(MOUNTAIN_Z + MOUNTAIN_THICKNESS));
+      mctx.lineTo(X(xMax), Z(MOUNTAIN_Z + MOUNTAIN_THICKNESS));
+      const step = 400;
+      // bumpy front edge — proxy depth based on local "height" (taller peaks bulge a bit forward)
+      const points = [];
+      for (let x = xMax; x >= xMin; x -= step) {
+        const h = ridgeHeight(x);
+        const bulge = (h - 4200) / (MOUNTAIN_HEIGHT - 4200) * 600;
+        points.push([x, MOUNTAIN_Z - bulge]);
+      }
+      for (const [x, z] of points) mctx.lineTo(X(x), Z(z));
+      mctx.closePath();
+      mctx.fill();
+      mctx.strokeStyle = '#7a6a55';
+      mctx.lineWidth = 1;
+      mctx.beginPath();
+      for (let i = 0; i < points.length; i++) {
+        const [x, z] = points[i];
+        if (i === 0) mctx.moveTo(X(x), Z(z));
+        else mctx.lineTo(X(x), Z(z));
+      }
+      mctx.stroke();
+
+      // Mountain label
+      mctx.fillStyle = 'rgba(255,255,255,0.4)';
+      mctx.font = '10px -apple-system, sans-serif';
+      mctx.textAlign = 'center';
+      mctx.fillText('MOUNTAINS', X(0), Z(MOUNTAIN_Z + MOUNTAIN_THICKNESS / 2) + 3);
+
+      // Camera path
+      mctx.strokeStyle = '#4cb3ff';
+      mctx.lineWidth = 2;
+      mctx.setLineDash([6, 4]);
+      mctx.beginPath();
+      mctx.moveTo(X(-CAMERA_PATH_HALF), Z(0));
+      mctx.lineTo(X( CAMERA_PATH_HALF), Z(0));
+      mctx.stroke();
+
+      // Balloon path
+      mctx.strokeStyle = '#ff5a4a';
+      mctx.beginPath();
+      mctx.moveTo(X(0), Z(BALLOON_Z_MIN));
+      mctx.lineTo(X(0), Z(BALLOON_Z_MAX));
+      mctx.stroke();
+      mctx.setLineDash([]);
+
+      // Sight line
+      mctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      mctx.lineWidth = 1;
+      mctx.beginPath();
+      mctx.moveTo(X(cx), Z(0));
+      mctx.lineTo(X(0), Z(bz));
+      mctx.stroke();
+
+      // Camera marker
+      const cax = X(cx), caz = Z(0);
+      const ang = Math.atan2(bz - 0, 0 - cx);
+      mctx.save();
+      mctx.translate(cax, caz);
+      mctx.rotate(ang);
+      mctx.fillStyle = '#4cb3ff';
+      mctx.strokeStyle = 'white';
+      mctx.lineWidth = 1;
+      mctx.beginPath();
+      mctx.moveTo(13, 0);
+      mctx.lineTo(-8, -8);
+      mctx.lineTo(-8,  8);
+      mctx.closePath();
+      mctx.fill();
+      mctx.stroke();
+      mctx.restore();
+
+      // Balloon marker
+      mctx.fillStyle = '#ff5a4a';
+      mctx.strokeStyle = 'white';
+      mctx.lineWidth = 1;
+      mctx.beginPath();
+      mctx.arc(X(0), Z(bz), 6, 0, Math.PI * 2);
+      mctx.fill();
+      mctx.stroke();
+    }
+
+    function update() {
+      const cx = parseFloat(camSlider.value);
+      const bz = parseFloat(balSlider.value);
+      camera.position.set(cx, CAMERA_Y, 0);
+      balloonGroup.position.set(0, BALLOON_Y, bz);
+      camera.lookAt(0, BALLOON_Y, bz);
+      camVal.textContent = fmt(cx);
+      balVal.textContent = fmt(bz);
+      drawMap(cx, bz);
+    }
+
+    // Optional query-string initial values: ?cam=10000&bal=15000
+    {
+      const q = new URLSearchParams(location.search);
+      const c = parseFloat(q.get('cam')), b = parseFloat(q.get('bal'));
+      if (Number.isFinite(c)) camSlider.value = Math.max(-CAMERA_PATH_HALF, Math.min(CAMERA_PATH_HALF, c));
+      if (Number.isFinite(b)) balSlider.value = Math.max(BALLOON_Z_MIN, Math.min(BALLOON_Z_MAX, b));
+    }
+
+    camSlider.addEventListener('input', update);
+    balSlider.addEventListener('input', update);
+
+    function tick() {
+      if (renderer) renderer.render(scene, camera);
+      requestAnimationFrame(tick);
+    }
+
+    resizePov();
+    resizeMap();
+    update();
+    requestAnimationFrame(tick);
+  </script>
+</body>
+</html>

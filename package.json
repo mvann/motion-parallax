@@ -1,0 +1,13 @@
+{
+  "name": "motion-parallax",
+  "version": "1.0.0",
+  "description": "Mobile-friendly 3D demonstration of motion parallax",
+  "private": true,
+  "scripts": {
+    "serve": "python3 -m http.server 8000",
+    "update-three": "npm install three@^0.160.0 && cp node_modules/three/build/three.module.min.js vendor/three.module.min.js"
+  },
+  "dependencies": {
+    "three": "^0.160.0"
+  }
+}
