@@ -52,11 +52,18 @@
       min-height: 0;
     }
     #grid .cell canvas { display: block; width: 100% !important; height: 100% !important; }
-    #map-wrap {
+    #bottom-row {
       flex: 2 1 0; min-height: 0;
-      background: #1b212b;
+      display: grid;
+      grid-template-columns: 4fr 6fr;
+      gap: 1px;
+      background: #222831;
       border-top: 1px solid #222831;
     }
+    #bottom-row > .cell { position: relative; overflow: hidden; min-width: 0; min-height: 0; }
+    #cam-obj { background: #000; }
+    #cam-obj canvas { display: block; width: 100% !important; height: 100% !important; }
+    #map-wrap { background: #1b212b; }
     #map { width: 100%; height: 100%; display: block; }
     .label {
       position: absolute;
@@ -130,9 +137,12 @@
     <div class="cell" id="cam-300x"> <div class="label">300×</div></div>
     <div class="cell" id="cam-1000x"><div class="label">1000×</div></div>
   </div>
-  <div id="map-wrap" class="view">
-    <div class="label">Top-down</div>
-    <canvas id="map"></canvas>
+  <div id="bottom-row">
+    <div id="cam-obj" class="cell"><div class="label">Object cam</div></div>
+    <div id="map-wrap" class="cell">
+      <div class="label">Top-down</div>
+      <canvas id="map"></canvas>
+    </div>
   </div>
   <div class="controls">
     <div class="ctrl-row">
@@ -235,6 +245,14 @@
       p.renderer = makeRenderer(p.host);
       p.camera = new THREE.PerspectiveCamera(WIDE_FOV / p.zoom, 1, 10, 250000);
     }
+    // 5th view: a camera fixed relative to the object, always looking at it.
+    // Since the object is stationary in world coords, this view shows that the
+    // object never moves — the parallax in the other panes is purely the
+    // observer flying past.
+    const objHost = document.getElementById('cam-obj');
+    const objRenderer = makeRenderer(objHost);
+    const objCamera = new THREE.PerspectiveCamera(48, 1, 1, 250000);
+    const OBJ_CAM_DIR = new THREE.Vector3(3, 2, -1.5).normalize(); // up-right-toward-observer
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x9ec9f3);
@@ -335,6 +353,7 @@
     }
     const ISLE_XMIN = -80000, ISLE_XMAX = 80000;
     const ISLE_ZMIN = -10000, ISLE_ZMAX = 80000;
+    let seaTimeUniform = null;
     {
       const g = new THREE.PlaneGeometry(400000, 400000, 1, 1);
       g.rotateX(-Math.PI / 2);
@@ -344,6 +363,8 @@
         shader.uniforms.islandsMap   = { value: islandsTex };
         shader.uniforms.islandsMin   = { value: new THREE.Vector2(ISLE_XMIN, ISLE_ZMIN) };
         shader.uniforms.islandsSize  = { value: new THREE.Vector2(ISLE_XMAX - ISLE_XMIN, ISLE_ZMAX - ISLE_ZMIN) };
+        shader.uniforms.uTime        = { value: 0 };
+        seaTimeUniform = shader.uniforms.uTime;
         // Vertex: forward world-space XZ position
         shader.vertexShader = 'varying vec3 vWorldPos;\n' + shader.vertexShader;
         shader.vertexShader = shader.vertexShader.replace(
@@ -358,6 +379,7 @@
           'uniform sampler2D islandsMap;',
           'uniform vec2 islandsMin;',
           'uniform vec2 islandsSize;',
+          'uniform float uTime;',
           'varying vec3 vWorldPos;',
           // Ashima 2D simplex noise — triangular lattice means no orthogonal grid
           // artifacts when stacked into fbm, the way Perlin's square lattice does.
@@ -401,7 +423,9 @@
           '  // Domain-warped simplex chop. Many octaves so detail survives at extreme zoom;',
           '  '+'// rotate ~37° per octave (avoids stacking at 90° or 180°) and lacunarity 2.13',
           '  '+'// so octave frequencies do not land on harmonic ratios.',
-          '  vec2 p = worldXZ * 0.012;',
+          '  // Slow time drift makes the wave field feel alive without distracting.',
+          '  vec2 timeDrift = vec2(uTime * 1.4, uTime * 0.6);',
+          '  vec2 p = (worldXZ + timeDrift) * 0.012;',
           '  float pxN = pxScale * 0.012;',
           '  vec2 warp = vec2(simplex2(p * 0.5),',
           '                   simplex2(p * 0.5 + vec2(31.7, 17.3))) * 0.5;',
@@ -656,12 +680,12 @@
     }
 
     const OBJECTS = {
-      latex:   { name: 'Latex balloon (1 ft)',    build: buildLatexBalloon   },
-      weather: { name: 'Weather balloon (5 ft)',  build: buildWeatherBalloon },
-      bird:    { name: 'Bird (6 ft wingspan)',    build: buildBird           },
-      human:   { name: 'Human / skydiver (6 ft)', build: buildHuman          },
-      hotair:  { name: 'Hot air balloon (60 ft)', build: buildHotAirBalloon  },
-      blimp:   { name: 'Blimp (200 ft)',          build: buildBlimp          },
+      latex:   { name: 'Latex balloon (1 ft)',    size:   1, build: buildLatexBalloon   },
+      weather: { name: 'Weather balloon (5 ft)',  size:   5, build: buildWeatherBalloon },
+      bird:    { name: 'Bird (6 ft wingspan)',    size:   6, build: buildBird           },
+      human:   { name: 'Human / skydiver (6 ft)', size:   6, build: buildHuman          },
+      hotair:  { name: 'Hot air balloon (60 ft)', size:  60, build: buildHotAirBalloon  },
+      blimp:   { name: 'Blimp (200 ft)',          size: 200, build: buildBlimp          },
     };
     let currentObject = 'weather';
 
@@ -682,6 +706,15 @@
       p.camera.updateProjectionMatrix();
     }
     for (const p of PANES) new ResizeObserver(() => resizePane(p)).observe(p.host);
+    function resizeObjCam() {
+      if (!objRenderer) return;
+      const w = objHost.clientWidth, h = objHost.clientHeight;
+      if (w === 0 || h === 0) return;
+      objRenderer.setSize(w, h, false);
+      objCamera.aspect = w / h;
+      objCamera.updateProjectionMatrix();
+    }
+    new ResizeObserver(resizeObjCam).observe(objHost);
 
     // ---- Top-down (2D canvas) ----
     const mapCanvas = document.getElementById('map');
@@ -712,8 +745,10 @@
 
     // Cached island top-down: renders the same islandHeight() field as the 3D mesh,
     // so the top-down view is unambiguously this ocean.
-    const MAP_X_MIN = -16000, MAP_X_MAX = 16000;
-    const MAP_Z_MIN = -2500,  MAP_Z_MAX = BALLOON_Z + 4000;
+    // Slightly wider extents than before because the top-down view now shares
+    // horizontal space with the object-cam pane.
+    const MAP_X_MIN = -22000, MAP_X_MAX = 22000;
+    const MAP_Z_MIN = -3500,  MAP_Z_MAX = BALLOON_Z + 8000;
     let islandMapCanvas = null, islandMapW = 0, islandMapH = 0;
     function buildIslandMap(W, H) {
       if (islandMapCanvas && islandMapW === W && islandMapH === H) return islandMapCanvas;
@@ -1006,6 +1041,7 @@
       }
     }
 
+    const _objTmp = new THREE.Vector3();
     function update() {
       const cx = parseFloat(camSlider.value);
       const bh = parseFloat(balSlider.value); // balloon height (Y)
@@ -1014,6 +1050,11 @@
         p.camera.position.set(cx, CAMERA_Y, 0);
         p.camera.lookAt(0, bh, BALLOON_Z);
       }
+      // Object cam: offset distance scaled to the object so it frames nicely.
+      const dist = OBJECTS[currentObject].size * 4.2;
+      _objTmp.copy(OBJ_CAM_DIR).multiplyScalar(dist).add(balloonGroup.position);
+      objCamera.position.copy(_objTmp);
+      objCamera.lookAt(balloonGroup.position);
       camVal.textContent = fmt(cx);
       balVal.textContent = fmt(bh);
       drawMap(cx);
@@ -1084,11 +1125,14 @@
         }
         lastFrameT = t;
       }
+      if (seaTimeUniform) seaTimeUniform.value = t / 1000;
       for (const p of PANES) if (p.renderer) p.renderer.render(scene, p.camera);
+      if (objRenderer) objRenderer.render(scene, objCamera);
       requestAnimationFrame(tick);
     }
 
     for (const p of PANES) resizePane(p);
+    resizeObjCam();
     resizeMap();
     update();
     requestAnimationFrame(tick);
