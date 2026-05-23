@@ -246,47 +246,6 @@
     scene.add(sun);
     scene.add(new THREE.HemisphereLight(0xcfe6ff, 0x4a3a2a, 0.55));
 
-    // Procedural ocean texture
-    function makeOceanTexture() {
-      const size = 512;
-      const c = document.createElement('canvas');
-      c.width = c.height = size;
-      const g = c.getContext('2d');
-      g.fillStyle = '#1c4a74';
-      g.fillRect(0, 0, size, size);
-      // Wavy lighter patches
-      for (let i = 0; i < 1800; i++) {
-        const x = Math.random() * size, y = Math.random() * size;
-        const r = 4 + Math.random() * 18;
-        const sh = 30 + (Math.random() * 40) | 0;
-        g.fillStyle = `rgba(${70 + sh},${120 + sh},${165 + sh},${0.10 + Math.random() * 0.22})`;
-        g.beginPath();
-        g.arc(x, y, r, 0, Math.PI * 2);
-        g.fill();
-      }
-      // Whitecaps
-      for (let i = 0; i < 700; i++) {
-        g.fillStyle = `rgba(255,255,255,${0.35 + Math.random() * 0.55})`;
-        g.beginPath();
-        g.arc(Math.random() * size, Math.random() * size, 0.4 + Math.random() * 1.4, 0, Math.PI * 2);
-        g.fill();
-      }
-      // Horizontal ripple streaks (give a sense of swell direction)
-      for (let i = 0; i < 220; i++) {
-        g.strokeStyle = `rgba(190,215,235,${0.08 + Math.random() * 0.15})`;
-        g.lineWidth = 0.5;
-        const y = Math.random() * size;
-        g.beginPath();
-        g.moveTo(Math.random() * size, y);
-        g.lineTo(Math.random() * size + 30 + Math.random() * 60, y + (Math.random() - 0.5) * 2);
-        g.stroke();
-      }
-      const tex = new THREE.CanvasTexture(c);
-      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-      tex.anisotropy = 4;
-      return tex;
-    }
-
     // ---- Perlin noise (gradient noise) for island heightfield ----
     const PERM = new Uint8Array(512);
     (() => {
@@ -379,10 +338,8 @@
     {
       const g = new THREE.PlaneGeometry(400000, 400000, 1, 1);
       g.rotateX(-Math.PI / 2);
-      const oceanTex = makeOceanTexture();
-      oceanTex.repeat.set(70, 70);
       const islandsTex = buildIslandsTexture();
-      const m = new THREE.MeshLambertMaterial({ map: oceanTex, color: 0x9cb8d8 });
+      const m = new THREE.MeshLambertMaterial({});
       m.onBeforeCompile = (shader) => {
         shader.uniforms.islandsMap   = { value: islandsTex };
         shader.uniforms.islandsMin   = { value: new THREE.Vector2(ISLE_XMIN, ISLE_ZMIN) };
@@ -393,28 +350,73 @@
           '#include <project_vertex>',
           '#include <project_vertex>\n  vWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;'
         );
-        // Fragment: composite islands over ocean inside <map_fragment>
-        shader.fragmentShader = (
-          'uniform sampler2D islandsMap;\n' +
-          'uniform vec2 islandsMin;\n' +
-          'uniform vec2 islandsSize;\n' +
-          'varying vec3 vWorldPos;\n'
-        ) + shader.fragmentShader;
+        // Fragment: per-pixel ocean (resolution-independent) + islands texture overlay.
+        // The high-frequency wave octaves and whitecaps fade out where one screen pixel
+        // covers more world distance than half a noise period, which is the Nyquist limit
+        // — that's the "free filtering" we lost by ditching the canvas texture's mipmaps.
+        shader.fragmentShader = [
+          'uniform sampler2D islandsMap;',
+          'uniform vec2 islandsMin;',
+          'uniform vec2 islandsSize;',
+          'varying vec3 vWorldPos;',
+          'float hash21(vec2 p) {',
+          '  p = fract(p * vec2(123.34, 456.21));',
+          '  p += dot(p, p + 45.32);',
+          '  return fract(p.x * p.y);',
+          '}',
+          'float valueNoise(vec2 p) {',
+          '  vec2 i = floor(p);',
+          '  vec2 f = fract(p);',
+          '  vec2 u = f * f * (3.0 - 2.0 * f);',
+          '  float a = hash21(i);',
+          '  float b = hash21(i + vec2(1.0, 0.0));',
+          '  float c = hash21(i + vec2(0.0, 1.0));',
+          '  float d = hash21(i + vec2(1.0, 1.0));',
+          '  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);',
+          '}',
+          'vec3 computeOceanColor(vec2 worldXZ) {',
+          '  const float OCEAN_SCALE = 1.0 / 150.0;',
+          '  vec2 p = worldXZ * OCEAN_SCALE;',
+          '  float pxNoise = max(fwidth(p.x), fwidth(p.y));',
+          '  float wave = 0.5;',
+          '  float amp = 0.5;',
+          '  float freq = 1.0;',
+          '  for (int i = 0; i < 6; i++) {',
+          '    float fade = 1.0 - smoothstep(0.25, 0.5, freq * pxNoise);',
+          '    wave += amp * (valueNoise(p * freq) - 0.5) * fade;',
+          '    amp *= 0.5;',
+          '    freq *= 2.0;',
+          '  }',
+          '  vec3 deep  = vec3(0.10, 0.27, 0.43);',
+          '  vec3 light = vec3(0.22, 0.45, 0.62);',
+          '  vec3 col = mix(deep, light, clamp(wave, 0.0, 1.0));',
+          '  float wcFreq = 22.0;',
+          '  float wcFade = 1.0 - smoothstep(0.25, 0.5, wcFreq * pxNoise);',
+          '  if (wcFade > 0.001) {',
+          '    float wc = valueNoise(p * wcFreq);',
+          '    float crest = smoothstep(0.62, 0.74, wc) * (1.0 - smoothstep(0.80, 0.90, wc)) * wcFade;',
+          '    col = mix(col, vec3(0.94, 0.97, 1.0), crest * 0.55);',
+          '  }',
+          '  return col;',
+          '}',
+        ].join('\n') + '\n' + shader.fragmentShader;
         shader.fragmentShader = shader.fragmentShader.replace(
-          '#include <map_fragment>',
+          '#include <color_fragment>',
           [
-            '#ifdef USE_MAP',
-            '  vec4 sampledDiffuseColor = texture2D( map, vMapUv );',
+            '#include <color_fragment>',
+            '{',
+            '  vec3 oceanCol = computeOceanColor(vWorldPos.xz);',
             '  vec2 isleUV = vec2(',
             '    (vWorldPos.x - islandsMin.x) / islandsSize.x,',
             '    1.0 - (vWorldPos.z - islandsMin.y) / islandsSize.y',
             '  );',
+            '  vec3 finalCol = oceanCol;',
             '  if (isleUV.x >= 0.0 && isleUV.x <= 1.0 && isleUV.y >= 0.0 && isleUV.y <= 1.0) {',
             '    vec4 islandSample = texture2D(islandsMap, isleUV);',
-            '    sampledDiffuseColor.rgb = mix(sampledDiffuseColor.rgb, islandSample.rgb, islandSample.a);',
+            '    finalCol = mix(finalCol, islandSample.rgb, islandSample.a);',
             '  }',
-            '  diffuseColor *= sampledDiffuseColor;',
-            '#endif',
+            '  diffuseColor.rgb = finalCol;',
+            '}',
           ].join('\n')
         );
       };
