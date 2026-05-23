@@ -35,10 +35,23 @@
       overflow: hidden;
       background: #000;
     }
-    #pov { flex: 3 1 0; min-height: 0; }
-    #pov canvas { display: block; width: 100% !important; height: 100% !important; }
-    #zoom { flex: 3 1 0; min-height: 0; border-top: 1px solid #222831; }
-    #zoom canvas { display: block; width: 100% !important; height: 100% !important; }
+    #grid {
+      flex: 5 1 0;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr 1fr;
+      gap: 1px;
+      background: #222831;
+    }
+    #grid .cell {
+      position: relative;
+      overflow: hidden;
+      background: #000;
+      min-width: 0;
+      min-height: 0;
+    }
+    #grid .cell canvas { display: block; width: 100% !important; height: 100% !important; }
     #map-wrap {
       flex: 2 1 0; min-height: 0;
       background: #1b212b;
@@ -111,11 +124,11 @@
   </style>
 </head>
 <body>
-  <div id="pov" class="view">
-    <div class="label">Camera POV</div>
-  </div>
-  <div id="zoom" class="view">
-    <div class="label">Zoomed</div>
+  <div id="grid">
+    <div class="cell" id="cam-1x">   <div class="label">1×</div></div>
+    <div class="cell" id="cam-30x">  <div class="label">30×</div></div>
+    <div class="cell" id="cam-300x"> <div class="label">300×</div></div>
+    <div class="cell" id="cam-1000x"><div class="label">1000×</div></div>
   </div>
   <div id="map-wrap" class="view">
     <div class="label">Top-down</div>
@@ -143,11 +156,11 @@
       <div class="ctrl-head">
         <label for="object"><span class="dot" style="background:var(--bal)"></span>Object</label>
         <select id="object" aria-label="Object">
-          <option value="weather">Weather balloon (5 ft)</option>
           <option value="latex">Latex balloon (1 ft)</option>
-          <option value="hotair">Hot air balloon (60 ft)</option>
-          <option value="human">Human / skydiver (6 ft)</option>
+          <option value="weather">Weather balloon (5 ft)</option>
           <option value="bird">Bird (6 ft wingspan)</option>
+          <option value="human">Human / skydiver (6 ft)</option>
+          <option value="hotair">Hot air balloon (60 ft)</option>
           <option value="blimp">Blimp (200 ft)</option>
         </select>
       </div>
@@ -158,13 +171,6 @@
         <span class="val" id="balVal">13,000 ft</span>
       </div>
       <input id="balSlider" type="range" min="500" max="13000" step="50" value="13000">
-    </div>
-    <div class="ctrl-row">
-      <div class="ctrl-head">
-        <label for="zoomSlider"><span class="dot" style="background:var(--cam)"></span>Zoom</label>
-        <span class="val" id="zoomVal">500×</span>
-      </div>
-      <input id="zoomSlider" type="range" min="1" max="1000" step="1" value="500">
     </div>
   </div>
 
@@ -199,15 +205,17 @@
     const BALLOON_HEIGHT_MIN = 500;
     const BALLOON_HEIGHT_MAX = 13000;
     const BALLOON_HEIGHT_DEFAULT = 13000;
-    const ZOOM_MIN = 1;
-    const ZOOM_MAX = 1000;
-    const ZOOM_DEFAULT = 500;
     const WIDE_FOV = 55;
+    // Camera panes (clockwise from top-left: 1×, 30×, 1000×, 300×; HTML reading order
+    // for the CSS grid is TL, TR, BL, BR).
+    const PANES = [
+      { id: 'cam-1x',    zoom: 1    },
+      { id: 'cam-30x',   zoom: 30   },
+      { id: 'cam-300x',  zoom: 300  },
+      { id: 'cam-1000x', zoom: 1000 },
+    ];
 
-    // ---- POV (Three.js) ----
-    const povEl = document.getElementById('pov');
-    const zoomEl = document.getElementById('zoom');
-    let renderer = null, zoomRenderer = null;
+    // ---- POV (Three.js) — one renderer + camera per pane ----
     function makeRenderer(host) {
       try {
         const r = new THREE.WebGLRenderer({ antialias: true });
@@ -222,15 +230,15 @@
         return null;
       }
     }
-    renderer = makeRenderer(povEl);
-    zoomRenderer = makeRenderer(zoomEl);
+    for (const p of PANES) {
+      p.host = document.getElementById(p.id);
+      p.renderer = makeRenderer(p.host);
+      p.camera = new THREE.PerspectiveCamera(WIDE_FOV / p.zoom, 1, 10, 250000);
+    }
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x9ec9f3);
     scene.fog = new THREE.Fog(0xb8d4f0, 25000, 90000);
-
-    const camera = new THREE.PerspectiveCamera(55, 1, 10, 250000);
-    const zoomCamera = new THREE.PerspectiveCamera(5, 1, 10, 250000);
 
     // Lights
     const sun = new THREE.DirectionalLight(0xfff1d6, 1.0);
@@ -602,12 +610,12 @@
     }
 
     const OBJECTS = {
-      weather: { name: 'Weather balloon (5 ft)',    build: buildWeatherBalloon, zoom: 450 },
-      latex:   { name: 'Latex balloon (1 ft)',      build: buildLatexBalloon,   zoom: 1000 },
-      hotair:  { name: 'Hot air balloon (60 ft)',   build: buildHotAirBalloon,  zoom: 40  },
-      human:   { name: 'Human / skydiver (6 ft)',   build: buildHuman,          zoom: 380 },
-      bird:    { name: 'Bird (6 ft wingspan)',      build: buildBird,           zoom: 380 },
-      blimp:   { name: 'Blimp (200 ft)',            build: buildBlimp,          zoom: 12  },
+      latex:   { name: 'Latex balloon (1 ft)',    build: buildLatexBalloon   },
+      weather: { name: 'Weather balloon (5 ft)',  build: buildWeatherBalloon },
+      bird:    { name: 'Bird (6 ft wingspan)',    build: buildBird           },
+      human:   { name: 'Human / skydiver (6 ft)', build: buildHuman          },
+      hotair:  { name: 'Hot air balloon (60 ft)', build: buildHotAirBalloon  },
+      blimp:   { name: 'Blimp (200 ft)',          build: buildBlimp          },
     };
     let currentObject = 'weather';
 
@@ -619,18 +627,15 @@
     }
     rebuildObject();
 
-    function resizeRenderer(r, host, cam) {
-      if (!r) return;
-      const w = host.clientWidth, h = host.clientHeight;
+    function resizePane(p) {
+      if (!p.renderer) return;
+      const w = p.host.clientWidth, h = p.host.clientHeight;
       if (w === 0 || h === 0) return;
-      r.setSize(w, h, false);
-      cam.aspect = w / h;
-      cam.updateProjectionMatrix();
+      p.renderer.setSize(w, h, false);
+      p.camera.aspect = w / h;
+      p.camera.updateProjectionMatrix();
     }
-    function resizePov()  { resizeRenderer(renderer,     povEl,  camera); }
-    function resizeZoom() { resizeRenderer(zoomRenderer, zoomEl, zoomCamera); }
-    new ResizeObserver(resizePov).observe(povEl);
-    new ResizeObserver(resizeZoom).observe(zoomEl);
+    for (const p of PANES) new ResizeObserver(() => resizePane(p)).observe(p.host);
 
     // ---- Top-down (2D canvas) ----
     const mapCanvas = document.getElementById('map');
@@ -650,10 +655,8 @@
     // ---- Controls ----
     const camSlider = document.getElementById('camSlider');
     const balSlider = document.getElementById('balSlider');
-    const zoomSlider = document.getElementById('zoomSlider');
     const camVal = document.getElementById('camVal');
     const balVal = document.getElementById('balVal');
-    const zoomVal = document.getElementById('zoomVal');
 
     function fmt(n) {
       const r = Math.round(n);
@@ -959,21 +962,14 @@
 
     function update() {
       const cx = parseFloat(camSlider.value);
-      const bh = parseFloat(balSlider.value);    // balloon height (Y)
-      const zoom = parseFloat(zoomSlider.value); // telephoto multiplier
-      camera.position.set(cx, CAMERA_Y, 0);
+      const bh = parseFloat(balSlider.value); // balloon height (Y)
       balloonGroup.position.set(0, bh, BALLOON_Z);
-      camera.lookAt(0, bh, BALLOON_Z);
-
-      // Zoomed camera: same pose, FOV = wide FOV / zoom
-      zoomCamera.position.copy(camera.position);
-      zoomCamera.quaternion.copy(camera.quaternion);
-      zoomCamera.fov = WIDE_FOV / zoom;
-      zoomCamera.updateProjectionMatrix();
-
+      for (const p of PANES) {
+        p.camera.position.set(cx, CAMERA_Y, 0);
+        p.camera.lookAt(0, bh, BALLOON_Z);
+      }
       camVal.textContent = fmt(cx);
       balVal.textContent = fmt(bh);
-      zoomVal.textContent = zoom.toFixed(0) + '×';
       drawMap(cx);
     }
 
@@ -994,12 +990,11 @@
 
     const objectSelect = document.getElementById('object');
 
-    // Optional query-string initial values: ?cam=10000&bal=12000&zoom=20&vehicle=helicopter&obj=blimp
+    // Optional query-string initial values: ?cam=10000&bal=12000&vehicle=helicopter&obj=blimp
     {
       const q = new URLSearchParams(location.search);
       const c = parseFloat(q.get('cam'));
       const b = parseFloat(q.get('bal'));
-      const z = parseFloat(q.get('zoom'));
       if (Number.isFinite(c)) {
         camSlider.value = Math.max(-CAMERA_PATH_HALF, Math.min(CAMERA_PATH_HALF, c));
         currentVehicle = 'manual';
@@ -1012,12 +1007,6 @@
         currentObject = qo;
         rebuildObject();
       }
-      // Apply per-object recommended zoom, unless user pinned one in URL
-      if (Number.isFinite(z)) {
-        zoomSlider.value = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
-      } else {
-        zoomSlider.value = OBJECTS[currentObject].zoom;
-      }
       objectSelect.value = currentObject;
     }
     setVehicle(currentVehicle);
@@ -1028,12 +1017,10 @@
       update();
     });
     balSlider.addEventListener('input', update);
-    zoomSlider.addEventListener('input', update);
     vehicleSelect.addEventListener('change', () => setVehicle(vehicleSelect.value));
     objectSelect.addEventListener('change', () => {
       currentObject = objectSelect.value;
       rebuildObject();
-      zoomSlider.value = OBJECTS[currentObject].zoom;
       update();
     });
 
@@ -1051,13 +1038,11 @@
         }
         lastFrameT = t;
       }
-      if (renderer)     renderer.render(scene, camera);
-      if (zoomRenderer) zoomRenderer.render(scene, zoomCamera);
+      for (const p of PANES) if (p.renderer) p.renderer.render(scene, p.camera);
       requestAnimationFrame(tick);
     }
 
-    resizePov();
-    resizeZoom();
+    for (const p of PANES) resizePane(p);
     resizeMap();
     update();
     requestAnimationFrame(tick);
