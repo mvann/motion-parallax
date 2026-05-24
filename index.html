@@ -906,6 +906,38 @@
       ctx.strokeStyle = 'white';
       ctx.lineWidth = 1;
       switch (type) {
+        case 'f18': {
+          // F-18 Hornet: pointed nose, sharply-swept wings, twin canted tails.
+          ctx.beginPath();
+          ctx.moveTo(16, 0);
+          ctx.lineTo(8, -1.8);
+          ctx.lineTo(-10, -2.4);
+          ctx.lineTo(-13, -2.0);
+          ctx.lineTo(-13, 2.0);
+          ctx.lineTo(-10, 2.4);
+          ctx.lineTo(8, 1.8);
+          ctx.closePath();
+          ctx.fill(); ctx.stroke();
+          for (const s of [-1, 1]) {
+            // Main wings (sharply swept)
+            ctx.beginPath();
+            ctx.moveTo(5, s * 1.8);
+            ctx.lineTo(-7, s * 12);
+            ctx.lineTo(-10, s * 11);
+            ctx.lineTo(-7, s * 2.2);
+            ctx.closePath();
+            ctx.fill(); ctx.stroke();
+            // Twin canted tail fins
+            ctx.beginPath();
+            ctx.moveTo(-9, s * 1.6);
+            ctx.lineTo(-14, s * 5.5);
+            ctx.lineTo(-15, s * 4.8);
+            ctx.lineTo(-11, s * 1.2);
+            ctx.closePath();
+            ctx.fill(); ctx.stroke();
+          }
+          break;
+        }
         case 'fighter': {
           ctx.beginPath();
           ctx.moveTo(15, 0);
